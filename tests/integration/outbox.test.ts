@@ -7,6 +7,7 @@ import { withScope } from "@/features/identity/scope";
 import { createPolicy, activatePolicy, getPolicy } from "@/features/approvals/service";
 import { listAlerts, acknowledgeAlert } from "@/features/alerts/service";
 import { claimPolicyEvent, deliverPolicyEvent, deferPolicyEvent, processPolicyBatch } from "@/features/jobs/outbox";
+import { getJob, retryJob } from "@/features/jobs/service";
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), otherOrg = randomUUID(), entity = randomUUID(), otherEntity = randomUUID(), secondEntity = randomUUID();
 const maker = `outbox-${randomUUID()}`, checker = `outbox-${randomUUID()}`, ordinary = `outbox-${randomUUID()}`, outsider = `outbox-${randomUUID()}`;
@@ -38,7 +39,9 @@ beforeAll(async () => {
 afterAll(async () => {
   const client = await admin.connect();
   try { await client.query("BEGIN"); await client.query("ALTER TABLE audit_events DISABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE approval_policies DISABLE TRIGGER approval_policy_no_delete");
-    for (const table of ["alerts", "outbox_events", "audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=ANY($1::uuid[])`, [[org, otherOrg]]);
+    await client.query("ALTER TABLE job_retries DISABLE TRIGGER job_retry_append_only");
+    for (const table of ["job_retries", "alerts", "outbox_events", "audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=ANY($1::uuid[])`, [[org, otherOrg]]);
+    await client.query("ALTER TABLE job_retries ENABLE TRIGGER job_retry_append_only");
     await client.query("DELETE FROM organizations WHERE id=ANY($1::uuid[])", [[org, otherOrg]]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [users]);
     await client.query("ALTER TABLE approval_policies ENABLE TRIGGER approval_policy_no_delete"); await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); await admin.end(); await databasePool().end(); }
@@ -174,4 +177,94 @@ it("failed outbox insertion rolls back activation, audit and idempotency togethe
   } finally { await admin.query("DROP TRIGGER outbox_acceptance_fault ON outbox_events"); await admin.query("DROP FUNCTION app_security.outbox_acceptance_fault()"); }
   await activatePolicy(checker, org, entity, policy.id, {}, 1, key, randomUUID());
   expect(await processPolicyBatch(checker, org, entity, 1)).toMatchObject({ delivered: 1 });
+});
+
+async function failCycle(id: string) {
+  for (let n = 0; n < 3; n++) {
+    const lease = (await claimPolicyEvent(checker, org, entity))!;
+    expect(lease.eventId).toBe(id); expect(await deferPolicyEvent(checker, org, entity, lease)).toBe(true);
+    if (n < 2) await advanceEvent(id, "available_at");
+  }
+}
+it("job inspection is typed, private, versioned and does not run delivery", async () => {
+  const policy = await activated(), event = await eventFor(policy.id);
+  const job = await getJob(checker, org, entity, event.id);
+  expect(job).toMatchObject({ status: "pending", version: 1, totalAttempts: 0, retryCount: 0, sourceId: policy.id, inputHash: policy.contentHash, totalItems: 1, completedItems: 0, retryHistory: [] });
+  expect(job).not.toHaveProperty("leaseToken"); expect(job).not.toHaveProperty("recipientId");
+  expect((await getPolicy(checker, org, entity, policy.id)).deliveryJobId).toBe(event.id);
+  expect((await getPolicy(maker, org, entity, policy.id)).deliveryJobId).toBeNull();
+  for (const actor of [maker, ordinary]) await expect(getJob(actor, org, entity, event.id)).rejects.toMatchObject({ status: 403 });
+  try {
+    await admin.query("UPDATE memberships SET roles='[\"finance_manager\",\"policy_reviewer\"]',version=version+1 WHERE organization_id=$1 AND user_id=$2", [org, ordinary]);
+    await expect(getJob(ordinary, org, entity, event.id)).rejects.toMatchObject({ status: 404 });
+    await expect(retryJob(ordinary, org, entity, event.id, { reason: "Another reviewer" }, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ status: 404 });
+  } finally { await admin.query("UPDATE memberships SET roles='[\"finance_manager\"]',version=version+1 WHERE organization_id=$1 AND user_id=$2", [org, ordinary]); }
+  await expect(getJob(checker, org, secondEntity, event.id)).rejects.toMatchObject({ status: 404 });
+  await expect(getJob(checker, otherOrg, otherEntity, event.id)).rejects.toMatchObject({ status: 404 });
+  await expect(retryJob(checker, org, entity, event.id, { reason: "Investigated" }, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+  const lease = (await claimPolicyEvent(checker, org, entity))!;
+  expect(await getJob(checker, org, entity, event.id)).toMatchObject({ status: "leased", version: 2, totalAttempts: 1 });
+  await deliverPolicyEvent(checker, org, entity, lease);
+  expect(await getJob(checker, org, entity, event.id)).toMatchObject({ status: "delivered", version: 3, completedItems: 1 });
+  await expect(retryJob(checker, org, entity, event.id, { reason: "Investigated" }, 3, randomUUID(), randomUUID())).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+});
+it("racing recovery commits one receipt/audit, preserves lifetime attempts and replays the original result after delivery", async () => {
+  const policy = await activated(), event = await eventFor(policy.id); await failCycle(event.id);
+  const failed = await getJob(checker, org, entity, event.id), key = randomUUID(), reason = { reason: "Investigated transient delivery failure" };
+  expect(failed).toMatchObject({ status: "failed", version: 7, totalAttempts: 3, attempts: 3 });
+  await expect(withScope(checker, org, entity, "jobs.update", c => c.query("UPDATE outbox_events SET status='pending',attempts=0,retry_count=retry_count+1,available_at=clock_timestamp(),completed_at=NULL,last_error_code=NULL WHERE id=$1", [event.id]))).rejects.toMatchObject({ code: "P0001" });
+  await expect(withScope(checker, org, entity, "jobs.update", c => c.query("UPDATE outbox_events SET total_attempts=0 WHERE id=$1", [event.id]))).rejects.toMatchObject({ code: "P0001" });
+  await expect(retryJob(checker, org, entity, event.id, reason, 6, randomUUID(), randomUUID())).rejects.toMatchObject({ status: 412 });
+  const responses = await Promise.all([retryJob(checker, org, entity, event.id, reason, failed.version, key, randomUUID()), retryJob(checker, org, entity, event.id, reason, failed.version, key, randomUUID())]);
+  expect(responses[0]).toEqual(responses[1]);
+  expect(await getJob(checker, org, entity, event.id)).toMatchObject({ status: "pending", version: 8, totalAttempts: 3, attempts: 0, retryCount: 1, retryHistory: [{ fromVersion: 7, reason: reason.reason }] });
+  expect((await admin.query("SELECT * FROM audit_events WHERE target_id=$1 AND action='job.retry'", [event.id])).rowCount).toBe(1);
+  await expect(retryJob(checker, org, entity, event.id, { reason: "Changed reason" }, failed.version, key, randomUUID())).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  const lease = (await claimPolicyEvent(checker, org, entity))!; await deliverPolicyEvent(checker, org, entity, lease);
+  expect(await retryJob(checker, org, entity, event.id, reason, failed.version, key, randomUUID())).toEqual(responses[0]);
+  expect(await getJob(checker, org, entity, event.id)).toMatchObject({ status: "delivered", totalAttempts: 4, retryCount: 1 });
+  expect((await admin.query("SELECT * FROM alerts WHERE event_id=$1", [event.id])).rowCount).toBe(1);
+  try {
+    await admin.query("UPDATE memberships SET roles='[\"policy_reviewer\"]',version=version+1 WHERE organization_id=$1 AND user_id=$2", [org, checker]);
+    await expect(getJob(checker, org, entity, event.id)).rejects.toMatchObject({ status: 403 });
+    await expect(retryJob(checker, org, entity, event.id, reason, failed.version, key, randomUUID())).rejects.toMatchObject({ status: 403 });
+  } finally { await admin.query("UPDATE memberships SET roles='[\"organization_admin\",\"policy_reviewer\"]',version=version+1 WHERE organization_id=$1 AND user_id=$2", [org, checker]); }
+});
+it("manual retry is bounded to three cycles without erasing attempts or immutable receipts", async () => {
+  const policy = await activated(), event = await eventFor(policy.id); await failCycle(event.id);
+  for (let count = 1; count <= 3; count++) {
+    const failed = await getJob(checker, org, entity, event.id);
+    await retryJob(checker, org, entity, event.id, { reason: `Recovery cycle ${count}` }, failed.version, randomUUID(), randomUUID());
+    await failCycle(event.id);
+  }
+  const failed = await getJob(checker, org, entity, event.id);
+  expect(failed).toMatchObject({ status: "failed", totalAttempts: 12, attempts: 3, retryCount: 3 }); expect(failed.retryHistory).toHaveLength(3);
+  await expect(retryJob(checker, org, entity, event.id, { reason: "One more" }, failed.version, randomUUID(), randomUUID())).rejects.toMatchObject({ code: "RETRY_LIMIT" });
+  expect((await databasePool().query("SELECT * FROM job_retries")).rows).toEqual([]);
+  for (const verb of ["DELETE FROM", "UPDATE"]) await expect(databasePool().query(verb === "UPDATE" ? "UPDATE job_retries SET reason='Changed'" : "DELETE FROM job_retries")).rejects.toMatchObject({ code: "42501" });
+  await expect(admin.query("UPDATE job_retries SET reason='Changed' WHERE event_id=$1", [event.id])).rejects.toMatchObject({ code: "P0001" });
+  await expect(withScope(checker, org, entity, "jobs.update", c => c.query("UPDATE outbox_events SET status='pending',attempts=0,retry_count=retry_count+1,completed_at=NULL WHERE id=$1", [event.id]))).rejects.toMatchObject({ code: "P0001" });
+});
+it("recipient grant revocation blocks recovery before creating history or idempotency", async () => {
+  const policy = await activated(), event = await eventFor(policy.id); await failCycle(event.id);
+  const job = await getJob(checker, org, entity, event.id), key = randomUUID();
+  try {
+    await admin.query("UPDATE memberships SET allowed_entity_ids='[]',version=version+1 WHERE organization_id=$1 AND user_id=$2", [org, maker]);
+    await expect(retryJob(checker, org, entity, event.id, { reason: "Investigated failure" }, job.version, key, randomUUID())).rejects.toMatchObject({ code: "JOB_SOURCE_UNAVAILABLE" });
+    expect((await admin.query("SELECT * FROM job_retries WHERE event_id=$1", [event.id])).rowCount).toBe(0);
+    expect((await admin.query("SELECT * FROM idempotency_results WHERE organization_id=$1 AND key=$2", [org, key])).rowCount).toBe(0);
+  } finally { await admin.query("UPDATE memberships SET allowed_entity_ids=$3,version=version+1 WHERE organization_id=$1 AND user_id=$2", [org, maker, JSON.stringify([entity, secondEntity])]); }
+});
+it("retry failure rolls back receipt, state, audit and replay result atomically", async () => {
+  const policy = await activated(), event = await eventFor(policy.id); await failCycle(event.id);
+  const failed = await getJob(checker, org, entity, event.id), key = randomUUID();
+  await admin.query(`CREATE FUNCTION app_security.job_recovery_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${event.id}'::uuid AND NEW.status='pending' THEN RAISE EXCEPTION 'Injected retry failure'; END IF; RETURN NEW; END $$`);
+  await admin.query("CREATE TRIGGER job_recovery_fault BEFORE UPDATE ON outbox_events FOR EACH ROW EXECUTE FUNCTION app_security.job_recovery_fault()");
+  try {
+    await expect(retryJob(checker, org, entity, event.id, { reason: "Investigated failure" }, failed.version, key, randomUUID())).rejects.toMatchObject({ code: "P0001" });
+    expect(await getJob(checker, org, entity, event.id)).toEqual(failed);
+    expect((await admin.query("SELECT * FROM job_retries WHERE event_id=$1", [event.id])).rowCount).toBe(0);
+    expect((await admin.query("SELECT * FROM audit_events WHERE target_id=$1 AND action='job.retry'", [event.id])).rowCount).toBe(0);
+    expect((await admin.query("SELECT * FROM idempotency_results WHERE organization_id=$1 AND key=$2", [org, key])).rowCount).toBe(0);
+  } finally { await admin.query("DROP TRIGGER job_recovery_fault ON outbox_events"); await admin.query("DROP FUNCTION app_security.job_recovery_fault()"); }
 });

@@ -56,9 +56,17 @@ export const outboxEvents = pgTable("outbox_events", {
   principalId: text("principal_id").notNull().references(() => user.id), recipientId: text("recipient_id").notNull().references(() => user.id),
   status: text("status").notNull().default("pending"), attempts: integer("attempts").notNull().default(0), availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
   leaseToken: uuid("lease_token"), leaseUntil: timestamp("lease_until", { withTimezone: true }), lastErrorCode: text("last_error_code"),
+  version: integer("version").notNull().default(1), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  totalAttempts: integer("total_attempts").notNull().default(0), retryCount: integer("retry_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), completedAt: timestamp("completed_at", { withTimezone: true }),
 }, t => [unique().on(t.organizationId, t.legalEntityId, t.id), unique().on(t.organizationId, t.legalEntityId, t.kind, t.policyId, t.sourceVersion),
   foreignKey({ columns: [t.organizationId, t.legalEntityId, t.policyId], foreignColumns: [approvalPolicies.organizationId, approvalPolicies.legalEntityId, approvalPolicies.id] })]);
+export const jobRetries = pgTable("job_retries", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
+  eventId: uuid("event_id").notNull(), principalId: text("principal_id").notNull().references(() => user.id),
+  fromVersion: integer("from_version").notNull(), reason: text("reason").notNull(), requestId: text("request_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.eventId, t.fromVersion), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.eventId], foreignColumns: [outboxEvents.organizationId, outboxEvents.legalEntityId, outboxEvents.id] })]);
 export const alerts = pgTable("alerts", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
   eventId: uuid("event_id").notNull(), effectKey: text("effect_key").notNull(), recipientId: text("recipient_id").notNull().references(() => user.id), policyId: uuid("policy_id").notNull(),

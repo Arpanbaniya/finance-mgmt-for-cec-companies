@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { z } from "zod";
 import type { ApprovalPolicyDTO } from "./contracts";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ export function PolicyCard({ policy, url, currentUserId, canActivate }: { policy
       <Button variant="outline" disabled={pending || conflict || !canActivate || self || (reason.trim().length > 0 && reason.trim().length < 3)} onClick={() => setConfirm(true)}>Activate policy</Button>
       {conflict ? <Button variant="outline" disabled={pending} onClick={() => router.refresh()}>Reload current policy</Button> : null}
     </div> : <p className="border-t pt-4 text-sm text-muted-foreground">Active definition is immutable. Existing document submissions will retain their own policy snapshot.</p>}
+    {policy.deliveryJobId ? <Button variant="outline" asChild><Link href={`/workspace/jobs?org=${policy.organizationId}&entity=${policy.entityId}&job=${policy.deliveryJobId}`}>Delivery job</Link></Button> : null}
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
     <AlertDialog open={confirm} onOpenChange={setConfirm}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Activate this approval policy?</AlertDialogTitle><AlertDialogDescription>This immutable definition will govern submissions for its protected actions and effective dates. Activation does not post money or activate statutory rules. Existing submission snapshots are unaffected.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel review</AlertDialogCancel><AlertDialogAction onClick={() => void activate()}>Confirm activation</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </CardContent></Card>;

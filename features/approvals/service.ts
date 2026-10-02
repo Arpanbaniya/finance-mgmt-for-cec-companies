@@ -13,16 +13,16 @@ type Row = Record<string, unknown>;
 function dto(row: Row) {
   return ApprovalPolicyDTO.parse({ ...(row.definition as object), id: row.id, organizationId: row.organization_id, entityId: row.legal_entity_id,
     status: row.status, version: row.version, contentHash: row.content_hash, createdBy: row.created_by, createdAt: (row.created_at as Date).toISOString(),
-    activatedBy: row.activated_by, activatedAt: row.activated_at ? (row.activated_at as Date).toISOString() : null, activationReason: row.activation_reason });
+    activatedBy: row.activated_by, activatedAt: row.activated_at ? (row.activated_at as Date).toISOString() : null, activationReason: row.activation_reason, deliveryJobId: row.delivery_job_id ?? null });
 }
 async function selected(client: PoolClient, org: string, entity: string, id: string, lock = false) {
-  const result = await client.query(`SELECT * FROM approval_policies WHERE organization_id=$1 AND legal_entity_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`, [org, entity, id]);
+  const result = await client.query(`SELECT p.*,e.id AS delivery_job_id FROM approval_policies p LEFT JOIN outbox_events e ON e.policy_id=p.id AND e.organization_id=p.organization_id AND e.legal_entity_id=p.legal_entity_id WHERE p.organization_id=$1 AND p.legal_entity_id=$2 AND p.id=$3${lock ? " FOR UPDATE OF p" : ""}`, [org, entity, id]);
   if (!result.rowCount) throw new DomainError("NOT_FOUND", "Approval policy is unavailable.", 404);
   return result.rows[0];
 }
 export async function listPolicies(user: string, org: string, entity: string, limit: number, cursor?: string) {
   return withScope(user, org, entity, "approvals.read", async client => {
-    const rows = await client.query("SELECT * FROM approval_policies WHERE organization_id=$1 AND legal_entity_id=$2 AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4", [org, entity, cursor ?? null, limit + 1]);
+    const rows = await client.query("SELECT p.*,e.id AS delivery_job_id FROM approval_policies p LEFT JOIN outbox_events e ON e.policy_id=p.id AND e.organization_id=p.organization_id AND e.legal_entity_id=p.legal_entity_id WHERE p.organization_id=$1 AND p.legal_entity_id=$2 AND ($3::uuid IS NULL OR p.id>$3) ORDER BY p.id LIMIT $4", [org, entity, cursor ?? null, limit + 1]);
     const data = rows.rows.slice(0, limit).map(dto); return { data, nextCursor: rows.rows.length > limit ? data.at(-1)!.id : null };
   });
 }

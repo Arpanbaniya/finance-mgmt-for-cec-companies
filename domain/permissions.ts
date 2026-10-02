@@ -5,7 +5,7 @@ export const roleGrants = {
   accountant: ["entity.read", "accounts.read", "journals.read", "journals.create", "journals.update", "journals.submit", "periods.read", "reports.read"],
   auditor: ["entity.read", "accounts.read", "journals.read", "periods.read", "reports.read", "audit.read", "approvals.read", "alerts.read", "alerts.update"],
   site_supervisor: ["entity.read", "sites.read", "workers.read", "attendance.read", "attendance.create", "attendance.submit", "expenses.create"],
-  policy_reviewer: ["entity.read", "approvals.read", "approval_policies.activate", "alerts.read", "alerts.update"]
+  policy_reviewer: ["entity.read", "approvals.read", "approval_policies.activate", "alerts.read", "alerts.update", "jobs.read", "jobs.update"]
 } as const;
 export type Role = keyof typeof roleGrants;
 export function permissionsFor(roles: string[]): Set<string> {

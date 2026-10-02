@@ -51,7 +51,9 @@ Activation commits a durable event alongside the policy change. An operator runs
 pnpm outbox:process
 ```
 
-The reviewer must still have activation authority and company access. The creator must still have policy access. One invocation processes a bounded batch and exits; no scheduler is configured automatically. Expired leases can be reclaimed on the next invocation. Delivery stops after three attempts; failed events require operator investigation. External email and other notification channels are not enabled.
+The reviewer must still have activation authority and company access. The creator must still have policy access. One invocation processes a bounded batch and exits; no scheduler is configured automatically. Expired leases can be reclaimed on the next invocation. Delivery stops after three attempts per cycle. External email and other notification channels are not enabled.
+
+The activating reviewer can open **Delivery job** on their active policy to inspect status, attempts, redacted errors and immutable recovery history. After investigating a failed delivery, enter a recovery reason and confirm **Retry failed job**. Recovery requeues work; an operator must run the scoped worker again. Three manual recovery cycles are permitted, with a maximum of twelve lifetime attempts. Earlier attempts remain recorded. Delivered and cancelled jobs cannot be reopened. Reload current status after a version conflict. Other reviewers and ordinary finance/admin accounts cannot inspect or retry this reviewer's job.
 
 ## Checks
 

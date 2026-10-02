@@ -2,7 +2,7 @@ import { test, expect, clientHeaders } from "./fixtures";
 import { config } from "dotenv";
 import { randomUUID, randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import { processPolicyBatch } from "@/features/jobs/outbox";
+import { processPolicyBatch, claimPolicyEvent, deferPolicyEvent } from "@/features/jobs/outbox";
 config({ path: ".env.local", quiet: true });
 process.env.INITIAL_SETUP = "true";
 const org = randomUUID(), password = randomBytes(24).toString("base64url"), makerEmail = `policy-maker-${randomUUID()}@example.invalid`, reviewerEmail = `policy-reviewer-${randomUUID()}@example.invalid`, financeEmail = `policy-finance-${randomUUID()}@example.invalid`;
@@ -24,7 +24,9 @@ test.afterAll(async () => {
   const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL }), client = await admin.connect();
   try {
     await client.query("BEGIN"); await client.query("ALTER TABLE audit_events DISABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE approval_policies DISABLE TRIGGER approval_policy_no_delete");
-    for (const table of ["alerts", "outbox_events", "audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
+    await client.query("ALTER TABLE job_retries DISABLE TRIGGER job_retry_append_only");
+    for (const table of ["job_retries", "alerts", "outbox_events", "audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
+    await client.query("ALTER TABLE job_retries ENABLE TRIGGER job_retry_append_only");
     await client.query("DELETE FROM organizations WHERE id=$1", [org]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [[maker, reviewer, finance]]);
     await client.query("ALTER TABLE approval_policies ENABLE TRIGGER approval_policy_no_delete"); await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); await admin.end(); }
@@ -73,7 +75,55 @@ test("maker saves exact ranges; independent reviewer activates, resolves stale s
     const replay = await reviewPage.request.post(`${base}/${next.id}/activate`, activation); expect(replay.status()).toBe(200); expect((await replay.json()).data).toEqual((await firstActivation.json()).data);
     await staleCard.getByRole("button", { name: "Activate policy", exact: true }).click(); const stale = reviewPage.waitForResponse(r => r.status() === 412 && r.url().endsWith(`${base}/${next.id}/activate`)); await reviewPage.getByRole("button", { name: "Confirm activation", exact: true }).click(); await stale; await expect(staleCard.getByRole("alert")).toContainText("Reload");
     await staleCard.getByRole("button", { name: "Reload current policy", exact: true }).click(); await expect(staleCard.getByText("active", { exact: true })).toBeVisible();
-    expect(await processPolicyBatch(reviewer, org, entity.id, 10)).toEqual({ delivered: 2, cancelled: 0, leaseLost: 0, deferred: 0 });
+    const eventId = (await (await reviewPage.request.get(`${base}/${draft.id}`)).json()).data.deliveryJobId;
+    expect(eventId).toBeTruthy();
+    const jobUrl = `/api/v1/orgs/${org}/entities/${entity.id}/jobs/${eventId}`, retryUrl = `${jobUrl}/retry`;
+    expect((await ordinary.get(jobUrl)).status()).toBe(403);
+    expect((await reviewPage.request.get(jobUrl.replace(eventId, randomUUID()))).status()).toBe(404);
+    expect((await (await page.request.get(`${base}/${draft.id}`)).json()).data.deliveryJobId).toBeNull();
+    async function failDelivery() {
+      const clock = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
+      try { for (let attempt = 0; attempt < 3; attempt++) {
+        const lease = (await claimPolicyEvent(reviewer, org, entity.id))!; expect(lease.eventId).toBe(eventId);
+        expect(await deferPolicyEvent(reviewer, org, entity.id, lease)).toBe(true);
+        if (attempt < 2) {
+          const client = await clock.connect();
+          try { await client.query("BEGIN"); await client.query("ALTER TABLE outbox_events DISABLE TRIGGER outbox_guard"); await client.query("UPDATE outbox_events SET available_at=clock_timestamp()-interval '1 second' WHERE id=$1 AND organization_id=$2", [eventId, org]); await client.query("ALTER TABLE outbox_events ENABLE TRIGGER outbox_guard"); await client.query("COMMIT"); }
+          catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+        }
+      } } finally { await clock.end(); }
+    }
+    await failDelivery();
+    expect(await processPolicyBatch(reviewer, org, entity.id, 1)).toEqual({ delivered: 1, cancelled: 0, leaseLost: 0, deferred: 0 });
+    await reviewCard.getByRole("link", { name: "Delivery job", exact: true }).click();
+    await expect(reviewPage.getByRole("heading", { name: "Delivery job", exact: true })).toBeVisible();
+    const jobCard = reviewPage.getByLabel("Delivery job", { exact: true }); await expect(jobCard.getByText("failed", { exact: true })).toBeVisible();
+    expect((await reviewPage.request.get(jobUrl)).headers().etag).toBe('"7"');
+    expect((await reviewPage.request.post(retryUrl, { headers: { "Idempotency-Key": randomUUID() }, data: { reason: "Investigated" } })).status()).toBe(428);
+    expect((await reviewPage.request.post(retryUrl, { headers: { "Idempotency-Key": randomUUID(), "If-Match": '"7"' }, data: { reason: "Investigated", attempts: 0 } })).status()).toBe(422);
+    await jobCard.getByLabel("Recovery reason", { exact: true }).fill("Reviewed transient failure before recovery");
+    await jobCard.getByRole("button", { name: "Retry failed job", exact: true }).click(); await reviewPage.getByRole("button", { name: "Cancel recovery", exact: true }).click();
+    expect((await (await reviewPage.request.get(jobUrl)).json()).data.status).toBe("failed");
+    await reviewPage.setViewportSize({ width: 360, height: 800 }); expect(await reviewPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await reviewPage.screenshot({ path: ".local/screenshots/job-recovery-mobile.png", fullPage: true });
+    await jobCard.getByRole("button", { name: "Retry failed job", exact: true }).click(); const uiRetry = reviewPage.waitForResponse(r => r.url().endsWith(retryUrl) && r.request().method() === "POST"); await reviewPage.getByRole("button", { name: "Confirm retry", exact: true }).click();
+    const uiQueued = await uiRetry; expect(uiQueued.status()).toBe(202); expect(uiQueued.headers().etag).toBe('"8"');
+    await expect(jobCard.getByText("pending", { exact: true })).toBeVisible();
+    await expect(jobCard.getByRole("region", { name: "Recovery history", exact: true })).toContainText("Reviewed transient failure before recovery");
+    await failDelivery(); await jobCard.getByRole("button", { name: "Reload status", exact: true }).click(); await expect(jobCard.getByText("failed", { exact: true })).toBeVisible();
+    await jobCard.getByLabel("Recovery reason", { exact: true }).fill("Reviewed second failed cycle");
+    const jobKey = randomUUID(), recovery = { headers: { "Idempotency-Key": jobKey, "If-Match": '"14"' }, data: { reason: "Investigated transient delivery failure" } };
+    const queued = await reviewPage.request.post(retryUrl, recovery); expect(queued.status()).toBe(202); expect(queued.headers().location).toBe(jobUrl); expect(queued.headers().etag).toBe('"15"');
+    const retryReplay = await reviewPage.request.post(retryUrl, recovery); expect(retryReplay.status()).toBe(202); expect((await retryReplay.json()).data).toEqual((await queued.json()).data);
+    await jobCard.getByRole("button", { name: "Retry failed job", exact: true }).click(); const staleJob = reviewPage.waitForResponse(r => r.url().endsWith(retryUrl) && r.status() === 412); await reviewPage.getByRole("button", { name: "Confirm retry", exact: true }).click(); await staleJob;
+    await expect(jobCard.getByRole("alert")).toContainText("Reload"); await jobCard.getByRole("button", { name: "Reload current job", exact: true }).click();
+    await expect(jobCard.getByText("pending", { exact: true })).toBeVisible(); await expect(jobCard.getByRole("region", { name: "Recovery history", exact: true })).toContainText(recovery.data.reason);
+    expect(await processPolicyBatch(reviewer, org, entity.id, 10)).toEqual({ delivered: 1, cancelled: 0, leaseLost: 0, deferred: 0 });
+    await jobCard.getByRole("button", { name: "Reload status", exact: true }).click(); await expect(jobCard.getByText("delivered", { exact: true })).toBeVisible();
+    expect((await (await reviewPage.request.get(jobUrl)).json()).data.totalAttempts).toBe(7);
+    expect((await (await reviewPage.request.post(retryUrl, recovery)).json()).data).toEqual((await queued.json()).data);
+    await reviewPage.screenshot({ path: ".local/screenshots/job-delivered-mobile.png", fullPage: true });
+    await reviewPage.setViewportSize({ width: 1280, height: 800 }); await reviewPage.getByRole("link", { name: "Back to controls", exact: true }).click();
     const alertBase = `/api/v1/orgs/${org}/entities/${entity.id}/alerts`;
     expect((await (await reviewPage.request.get(alertBase)).json()).data).toEqual([]);
     expect((await page.request.get(`${alertBase}?includePrivateValues=true`)).status()).toBe(422);
