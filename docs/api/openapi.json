@@ -1482,12 +1482,26 @@
             "maxLength": 200
           },
           "registrationIdentifier": {
-            "type": "string",
-            "maxLength": 100
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "taxIdentifier": {
-            "type": "string",
-            "maxLength": 100
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "activeModes": {
             "minItems": 1,

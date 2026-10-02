@@ -6,6 +6,7 @@ export default defineConfig({
   test: { projects: [
     { extends: true, test: { name: "unit", include: ["tests/unit/**/*.test.ts"] } },
     { extends: true, test: { name: "contract", include: ["tests/contract/**/*.test.ts"] } },
+    { extends: true, test: { name: "storage", include: ["tests/storage/**/*.test.ts"], testTimeout: 60000, hookTimeout: 120000, fileParallelism: false } },
     { extends: true, test: { name: "integration", include: ["tests/integration/**/*.test.ts"], testTimeout: 30000, hookTimeout: 30000, fileParallelism: false } }
   ] }
 });

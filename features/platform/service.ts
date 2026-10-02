@@ -57,7 +57,7 @@ export async function patchEntity(user: string, org: string, entity: string, inp
     if (!selected.rowCount) throw new DomainError("NOT_FOUND", "Legal entity is unavailable.", 404);
     const old = selected.rows[0];
     if (old.version !== version) throw new DomainError("STALE_VERSION", "Reload the current record before editing.", 412);
-    const updated = await client.query("UPDATE legal_entities SET name=$2,registration_identifier=$3,tax_identifier=$4,active_modes=$5,version=version+1,updated_at=now() WHERE id=$1 RETURNING *", [entity, input.name ?? old.name, input.registrationIdentifier ?? old.registration_identifier, input.taxIdentifier ?? old.tax_identifier, JSON.stringify(input.activeModes ?? old.active_modes)]);
+    const updated = await client.query("UPDATE legal_entities SET name=$2,registration_identifier=$3,tax_identifier=$4,active_modes=$5,version=version+1,updated_at=now() WHERE id=$1 RETURNING *", [entity, input.name ?? old.name, input.registrationIdentifier === undefined ? old.registration_identifier : input.registrationIdentifier, input.taxIdentifier === undefined ? old.tax_identifier : input.taxIdentifier, JSON.stringify(input.activeModes ?? old.active_modes)]);
     await audit(client, org, user, "entity.update", entity, requestId);
     return entityDTO(updated.rows[0]);
   });

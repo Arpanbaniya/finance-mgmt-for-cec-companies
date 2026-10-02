@@ -8,6 +8,8 @@ function createAuth() {
   return betterAuth({
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.BETTER_AUTH_URL,
+    // Provider errors can contain SQL parameters/session tokens. Log categories only.
+    logger: { level: "warn", log: level => { console.warn(JSON.stringify({ component: "authentication", level })); } },
     database: drizzleAdapter(database(), { provider: "pg", schema }),
     emailAndPassword: { enabled: true, disableSignUp: process.env.INITIAL_SETUP !== "true", minPasswordLength: 14 },
     session: { expiresIn: 60 * 60 * 8, updateAge: 60 * 30, cookieCache: { enabled: false } },

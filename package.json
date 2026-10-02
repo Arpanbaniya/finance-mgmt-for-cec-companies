@@ -17,6 +17,9 @@
     "test:integration": "vitest run --project integration",
     "test:e2e": "playwright test",
     "services:up": "tsx scripts/local-postgres.ts",
+    "storage:install": "tsx scripts/install-storage.ts",
+    "storage:up": "tsx scripts/local-storage.ts",
+    "test:storage": "vitest run --project storage",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:generate": "drizzle-kit generate",
     "setup:local": "tsx scripts/setup-local.ts",
@@ -26,6 +29,8 @@
     "finance-reconcile": "vitest run --project unit tests/unit/accounting.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1145.0",
+    "@aws-sdk/s3-request-presigner": "3.1145.0",
     "@tailwindcss/postcss": "4.3.3",
     "better-auth": "1.7.7",
     "class-variance-authority": "0.7.1",

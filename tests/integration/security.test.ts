@@ -74,6 +74,14 @@ it("stale If-Match changes nothing", async () => {
   expect(updated.version).toBe(2);
   await expect(patchEntity(maker, orgA, entityA, { name: "Stale overwrite" }, 1, randomUUID())).rejects.toMatchObject({ status: 412 });
 });
+it("nullable identifiers clear explicitly; omitted identifiers remain unchanged", async () => {
+  const current = await getEntity(maker, orgA, entityA);
+  const identified = await patchEntity(maker, orgA, entityA, { registrationIdentifier: "REG-TEST", taxIdentifier: "TAX-TEST" }, current.version, randomUUID());
+  const renamed = await patchEntity(maker, orgA, entityA, { name: "Renamed with identifiers" }, identified.version, randomUUID());
+  expect(renamed.registrationIdentifier).toBe("REG-TEST"); expect(renamed.taxIdentifier).toBe("TAX-TEST");
+  const cleared = await patchEntity(maker, orgA, entityA, { registrationIdentifier: null, taxIdentifier: null }, renamed.version, randomUUID());
+  expect(cleared.registrationIdentifier).toBeNull(); expect(cleared.taxIdentifier).toBeNull();
+});
 it("administrators cannot alter their own roles", async () => {
   await expect(changeMember(maker, orgA, { userId: maker, roleIds: ["finance_manager"], allowedEntityIds: [entityA], siteIds: [], active: true }, randomUUID(), { key: randomUUID() })).rejects.toMatchObject({ code: "SELF_ESCALATION" });
 });

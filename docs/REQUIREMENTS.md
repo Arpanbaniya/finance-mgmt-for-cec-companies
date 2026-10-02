@@ -48,6 +48,7 @@ V2 master is the implementation contract. Requirement IDs below freeze all R1 do
 
 | Requirement | API / boundary | Tables/services | Actual tests | Screen |
 |---|---|---|---|---|
+| R1-SETUP | Local setup/installer, private S3 configuration | scripts/setup-local/install-storage/storage-process; documents/storage-config | unit local-setup/storage-config; real storage authentication/signature/expiry/persistence | infrastructure only; document UI deferred |
 | R1-ENTITY | GET/POST org entities, GET/PATCH entity | legal_entities, organizations, branches; platform/service | integration/security; strict platform contracts | workspace |
 | R1-IDENTITY | Better Auth allowlisted adapter, GET me, GET/POST/PATCH memberships | auth tables, memberships; identity/auth/session/scope; platform/memberships | integration/authentication/security; browser company-setup | sign-in, workspace |
 | R1-ISOLATION | Every entity/membership operation | migration 0002-security; withScope, composite branch FK | runtime nonowner/no BYPASSRLS, unscoped SQL, guessed IDs, pooled reuse, revocation, last admin | server-enforced |

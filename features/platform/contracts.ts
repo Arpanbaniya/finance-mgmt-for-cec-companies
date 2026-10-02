@@ -6,7 +6,10 @@ export const EntityCreate = z.strictObject({
   name: z.string().trim().min(1).max(200), registrationIdentifier: z.string().max(100).optional(), taxIdentifier: z.string().max(100).optional(),
   baseCurrency: z.literal("NPR"), timezone: z.literal("Asia/Kathmandu"), activeModes: z.array(z.literal("labour")).min(1).max(1), reportingProfile: z.enum(["demo_accrual", "review_required"])
 });
-export const EntityPatch = EntityCreate.pick({ name: true, registrationIdentifier: true, taxIdentifier: true, activeModes: true }).partial().refine(v => Object.keys(v).length > 0, "Supply at least one editable field.");
+export const EntityPatch = z.strictObject({
+  name: EntityCreate.shape.name.optional(), registrationIdentifier: z.string().trim().max(100).nullable().optional(),
+  taxIdentifier: z.string().trim().max(100).nullable().optional(), activeModes: EntityCreate.shape.activeModes.optional(),
+}).refine(v => Object.keys(v).length > 0, "Supply at least one editable field.");
 export const MembershipChange = z.strictObject({
   userId: z.string().min(1).max(200), allowedEntityIds: z.array(uuid).max(500),
   roleIds: z.array(z.enum(Object.keys(roleGrants) as [keyof typeof roleGrants, ...(keyof typeof roleGrants)[]])).min(1).max(6),

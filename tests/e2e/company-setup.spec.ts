@@ -42,9 +42,12 @@ test("unauthenticated workspace requires sign-in and public signup is denied", a
   expect((await request.get("/api/v1/me")).status()).toBe(401);
 });
 test("operator signs in, creates a real legal entity, survives reload and signs out", async ({ page }) => {
+  test.setTimeout(90000); // Includes create, two edits, competing edit, reload and logout.
   const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
   await page.goto("/sign-in"); await page.getByLabel("Email", { exact: true }).fill(email); await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click(); await expect(page).toHaveURL(/\/workspace$/);
+  const signedIn = page.waitForResponse(r => r.url().endsWith("/api/auth/sign-in/email") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click(); expect((await signedIn).status()).toBe(200);
+  await expect(page).toHaveURL(/\/workspace$/, { timeout: 15000 });
   await page.getByLabel("Legal entity name").fill("परीक्षण Workforce Pvt. Ltd.");
   const saved = page.waitForResponse(r => r.url().endsWith(`/orgs/${orgId}/entities`) && r.request().method() === "POST");
   await page.getByRole("button", { name: "Create entity", exact: true }).click();
@@ -55,6 +58,28 @@ test("operator signs in, creates a real legal entity, survives reload and signs 
   const entities = await admin.query("SELECT name FROM legal_entities WHERE organization_id=$1", [orgId]);
   expect(entities.rows).toEqual([{ name: "परीक्षण Workforce Pvt. Ltd." }]);
   expect((await admin.query("SELECT * FROM audit_events WHERE organization_id=$1 AND action='entity.create'", [orgId])).rowCount).toBe(1); await admin.end();
+  await page.getByRole("button", { name: "Edit परीक्षण Workforce Pvt. Ltd.", exact: true }).click();
+  await page.getByLabel("Company name", { exact: true }).fill("परीक्षण Workforce Updated Pvt. Ltd.");
+  await page.getByLabel("Registration identifier").fill("REG-DEMO-001");
+  const edited = page.waitForResponse(r => r.request().method() === "PATCH" && r.url().includes(`/orgs/${orgId}/entities/`));
+  await page.getByRole("button", { name: "Save changes", exact: true }).click(); expect((await edited).status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "परीक्षण Workforce Updated Pvt. Ltd." })).toBeVisible(); await page.reload();
+  await page.getByRole("button", { name: "Edit परीक्षण Workforce Updated Pvt. Ltd.", exact: true }).click();
+  await expect(page.getByLabel("Registration identifier")).toHaveValue("REG-DEMO-001");
+  await page.getByLabel("Registration identifier").fill("");
+  const entityList = await page.request.get(`/api/v1/orgs/${orgId}/entities`);
+  const company = (await entityList.json()).data[0];
+  expect((await page.request.patch(`/api/v1/orgs/${orgId}/entities/${company.id}`, { headers: { "If-Match": `"${company.version}"` }, data: { taxIdentifier: "TAX-DEMO-EXTERNAL" } })).status()).toBe(200);
+  const stale = page.waitForResponse(r => r.request().method() === "PATCH" && r.status() === 412);
+  await page.getByRole("button", { name: "Save changes", exact: true }).click(); await stale;
+  await expect(page.getByRole("form", { name: "Edit company" }).getByRole("alert")).toContainText("Reload");
+  await page.getByRole("button", { name: "Reload current company" }).click();
+  await expect(page.getByLabel("Tax identifier")).toHaveValue("TAX-DEMO-EXTERNAL");
+  await page.getByLabel("Registration identifier").fill("");
+  const cleared = page.waitForResponse(r => r.request().method() === "PATCH" && r.url().includes(`/orgs/${orgId}/entities/`));
+  await page.getByRole("button", { name: "Save changes", exact: true }).click(); expect((await cleared).status()).toBe(200);
+  await page.setViewportSize({ width: 360, height: 800 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: "test-results/workspace-desktop.png", fullPage: true });
   await page.getByRole("button", { name: "Sign out" }).click(); await expect(page).toHaveURL(/\/sign-in$/); expect(errors).toEqual([]);
 });
