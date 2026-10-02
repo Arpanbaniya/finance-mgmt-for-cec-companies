@@ -19,9 +19,9 @@ type Member = z.infer<typeof MembershipDTO>;
 type Entity = z.infer<typeof EntityDTO>;
 const roleLabels: Record<Role, string> = {
   organization_admin: "Organization administrator", owner: "Owner", finance_manager: "Finance manager",
-  accountant: "Accountant", auditor: "Auditor", site_supervisor: "Site supervisor",
+  accountant: "Accountant", auditor: "Auditor", site_supervisor: "Site supervisor", policy_reviewer: "Policy reviewer",
 };
-function label(role: string) { return role in roleLabels ? roleLabels[role as Role] : role; }
+function label(role: string) { return Object.hasOwn(roleLabels, role) ? roleLabels[role as Role] : role; }
 
 export function MembershipWorkspace({ organizationId, currentUserId, members, nextCursor, entities, entityChoicesTruncated, paginated }: {
   organizationId: string; currentUserId: string; members: Member[]; nextCursor: string | null; entities: Entity[]; entityChoicesTruncated: boolean; paginated: boolean;

@@ -12,7 +12,7 @@ export const EntityPatch = z.strictObject({
 }).refine(v => Object.keys(v).length > 0, "Supply at least one editable field.");
 export const MembershipChange = z.strictObject({
   userId: z.string().min(1).max(200), allowedEntityIds: z.array(uuid).max(500),
-  roleIds: z.array(z.enum(Object.keys(roleGrants) as [keyof typeof roleGrants, ...(keyof typeof roleGrants)[]])).min(1).max(6),
+  roleIds: z.array(z.enum(Object.keys(roleGrants) as [keyof typeof roleGrants, ...(keyof typeof roleGrants)[]])).min(1).max(7),
   siteIds: z.array(uuid).max(500).length(0, "Site grants require the later workforce module."), active: z.boolean()
 });
 export const ListQuery = z.strictObject({ cursor: uuid.optional(), limit: z.coerce.number().int().min(1).max(100).default(25) });

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, clientHeaders } from "./fixtures";
 import { config } from "dotenv";
 import { randomUUID, randomBytes } from "node:crypto";
 import { Pool } from "pg";
@@ -28,7 +28,7 @@ test.afterAll(async () => {
     await client.query("DELETE FROM organizations WHERE id=$1", [orgId]);
     await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [[userId, memberUserId]]);
     await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("COMMIT");
-  } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); await admin.end(); const { databasePool } = await import("../../db/client"); await databasePool().end(); }
+  } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); await admin.end(); }
 });
 
 test("administrator grants, updates, resolves stale access and revokes a real membership", async ({ page, playwright }) => {
@@ -56,7 +56,7 @@ test("administrator grants, updates, resolves stale access and revokes a real me
   await form.getByRole("button", { name: "Create membership", exact: true }).click();
   const createdResponse = await created; expect(createdResponse.status()).toBe(201); const member = (await createdResponse.json()).data;
   await expect(page.getByText(memberUserId, { exact: true })).toBeVisible(); await page.reload();
-  const memberClient = await playwright.request.newContext({ baseURL: "http://localhost:3000" });
+  const memberClient = await playwright.request.newContext({ baseURL: "http://localhost:3000", extraHTTPHeaders: clientHeaders() });
   try {
     expect((await memberClient.post("/api/auth/sign-in/email", { data: { email: memberEmail, password } })).status()).toBe(200);
     expect((await memberClient.get(`/api/v1/orgs/${orgId}/memberships`)).status()).toBe(403);

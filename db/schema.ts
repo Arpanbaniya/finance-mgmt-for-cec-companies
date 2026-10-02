@@ -39,6 +39,13 @@ export const legalEntities = pgTable("legal_entities", {
 export const branches = pgTable("branches", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), name: text("name").notNull()
 }, t => [foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
+export const approvalPolicies = pgTable("approval_policies", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
+  definition: jsonb("definition").notNull(), canonicalPayload: text("canonical_payload").notNull(), contentHash: text("content_hash").notNull(),
+  status: text("status").notNull().default("draft"), version: integer("version").notNull().default(1),
+  createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  activatedBy: text("activated_by").references(() => user.id), activatedAt: timestamp("activated_at", { withTimezone: true }), activationReason: text("activation_reason"),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id"), actorId: text("actor_id").notNull(),
   action: text("action").notNull(), targetId: uuid("target_id").notNull(), requestId: text("request_id").notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow()

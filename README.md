@@ -36,6 +36,8 @@ Sign in with an operator-provisioned account and select an organization. Organiz
 
 Use **Manage memberships** to assign an existing verified user ID, roles and visible legal-entity grants. Accounts are provisioned separately; no invitation is sent. Another administrator must change your own access. Revoking a membership blocks organization access on the next authorized request and retains history. If an edit conflicts with a newer version, reload current memberships before retrying.
 
+Open **Approval policies and audit** on a company card to create immutable NPR approval definitions and browse its event history. Thresholds must cover every amount from zero without gaps; the final upper bound is blank. End dates are exclusive. Activation requires a different person with both the **Policy reviewer** role and an administrator or finance manager role. Another administrator must grant that access. Overlapping active policies for the same protected action are rejected; an open-ended active policy cannot be silently replaced. A policy activation does not post money or activate tax rules. Financial document submissions remain under development.
+
 ## Checks
 
 ```sh
@@ -59,4 +61,4 @@ The web application runs on Vercel. Configure a hosted PostgreSQL database using
 
 Configure a private S3-compatible bucket with `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. Use HTTPS outside loopback development. Do not upload local credentials or service data.
 
-The current application supports company setup. Accounting, payroll, billing and document workflows are under development. Live use requires reviewed company policies and the applicable release acceptance checks.
+The current application supports company setup, membership administration, approval-policy setup and scoped audit browsing. Accounting, payroll, billing and financial document workflows are under development. Live use requires reviewed company policies and the applicable release acceptance checks.

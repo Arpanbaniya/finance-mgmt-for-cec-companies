@@ -10,8 +10,8 @@ export function entityDTO(r: Row) {
   return EntityDTO.parse({ id: r.id, organizationId: r.organization_id, name: r.name, registrationIdentifier: r.registration_identifier, taxIdentifier: r.tax_identifier, baseCurrency: r.base_currency, timezone: r.timezone, activeModes: r.active_modes, reportingProfile: r.reporting_profile, policyStatus: r.policy_status, version: r.version, createdAt: (r.created_at as Date).toISOString(), updatedAt: (r.updated_at as Date).toISOString() });
 }
 export function memberDTO(r: Row) { return MembershipDTO.parse({ id: r.id, organizationId: r.organization_id, userId: r.user_id, roleIds: r.roles, allowedEntityIds: r.allowed_entity_ids, siteIds: r.site_ids, active: r.active, version: r.version }); }
-export async function audit(client: PoolClient, org: string, user: string, action: string, target: string, requestId: string) {
-  await client.query("INSERT INTO audit_events(id,organization_id,actor_id,action,target_id,request_id) VALUES($1,$2,$3,$4,$5,$6)", [randomUUID(), org, user, action, target, requestId]);
+export async function audit(client: PoolClient, org: string, user: string, action: string, target: string, requestId: string, entity: string | null = null) {
+  await client.query("INSERT INTO audit_events(id,organization_id,actor_id,action,target_id,request_id,legal_entity_id) VALUES($1,$2,$3,$4,$5,$6,$7)", [randomUUID(), org, user, action, target, requestId, entity]);
 }
 export async function listEntities(user: string, org: string, limit: number, cursor?: string) {
   return withScope(user, org, null, "entity.read", async client => {
@@ -44,7 +44,7 @@ export async function createEntity(user: string, org: string, input: EntityInput
     // Self-grants are forbidden through runtime membership APIs. A narrowly scoped
     // migration-owned function grants only the entity the admin just created.
     await client.query("SELECT app_security.grant_created_entity($1,$2)", [org, id]);
-    await audit(client, org, user, "entity.create", id, requestId);
+    await audit(client, org, user, "entity.create", id, requestId, id);
     const row = await client.query("SELECT * FROM legal_entities WHERE id=$1", [id]);
     const response = entityDTO(row.rows[0]);
     await client.query("INSERT INTO idempotency_results(id,organization_id,principal_id,operation,key,request_hash,resource_id,response) VALUES($1,$2,$3,'entity.create',$4,$5,$6,$7)", [randomUUID(), org, user, key, hash, id, JSON.stringify(response)]);
@@ -58,7 +58,7 @@ export async function patchEntity(user: string, org: string, entity: string, inp
     const old = selected.rows[0];
     if (old.version !== version) throw new DomainError("STALE_VERSION", "Reload the current record before editing.", 412);
     const updated = await client.query("UPDATE legal_entities SET name=$2,registration_identifier=$3,tax_identifier=$4,active_modes=$5,version=version+1,updated_at=now() WHERE id=$1 RETURNING *", [entity, input.name ?? old.name, input.registrationIdentifier === undefined ? old.registration_identifier : input.registrationIdentifier, input.taxIdentifier === undefined ? old.tax_identifier : input.taxIdentifier, JSON.stringify(input.activeModes ?? old.active_modes)]);
-    await audit(client, org, user, "entity.update", entity, requestId);
+    await audit(client, org, user, "entity.update", entity, requestId, entity);
     return entityDTO(updated.rows[0]);
   });
 }

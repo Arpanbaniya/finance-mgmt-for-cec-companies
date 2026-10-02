@@ -34,6 +34,8 @@ try {
   await client.query("GRANT SELECT,INSERT,UPDATE,DELETE ON auth_user,auth_session,auth_account,auth_verification,auth_rate_limit TO kaamledger_app");
   await client.query("GRANT SELECT ON organizations TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT,UPDATE ON memberships,legal_entities,branches TO kaamledger_app");
+  await client.query("GRANT SELECT,INSERT,UPDATE ON approval_policies TO kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.can_manage_policy(uuid),app_security.can_activate_policy(uuid),app_security.lock_policy_scope(uuid,uuid) TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT ON audit_events,idempotency_results TO kaamledger_app");
   await client.query("REVOKE CREATE ON SCHEMA public FROM PUBLIC");
   await client.query("COMMIT");
