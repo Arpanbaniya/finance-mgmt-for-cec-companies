@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0c1110;
+  --foreground: #e8eee9;
+  --card: #141b18;
+  --card-foreground: #e8eee9;
+  --popover: #141b18;
+  --popover-foreground: #e8eee9;
+  --primary: #b9d884;
+  --primary-foreground: #17210e;
+  --secondary: #202a24;
+  --secondary-foreground: #e8eee9;
+  --muted: #1a231e;
+  --muted-foreground: #9daaa1;
+  --accent: #243127;
+  --accent-foreground: #e8eee9;
+  --destructive: #ffb4a8;
+  --border: #2a352e;
+  --input: #354239;
+  --ring: #b9d884;
+  --radius: 0.625rem;
+}
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.75);
+  --radius-md: calc(var(--radius) * 0.875);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground antialiased; }
+  button, a, input { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+}
+::selection { background: var(--primary); color: var(--primary-foreground); }

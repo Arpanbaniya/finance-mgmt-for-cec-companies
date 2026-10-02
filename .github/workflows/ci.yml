@@ -1,0 +1,53 @@
+name: Phase 1 verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: ci-migration-only
+          POSTGRES_DB: kaamledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kaamledger"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://kaamledger_app:ci-runtime-only@127.0.0.1:5432/kaamledger
+      MIGRATION_DATABASE_URL: postgresql://postgres:ci-migration-only@127.0.0.1:5432/kaamledger
+      BETTER_AUTH_SECRET: ci-only-random-looking-secret-never-used-in-a-deployment-7cb6a84d
+      BETTER_AUTH_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm route-parity
+      - run: pnpm api:generate
+      - run: git diff --exit-code -- docs/api/openapi.json
+      - run: pnpm db:migrate
+      - run: pnpm test:integration
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-evidence
+          path: |
+            test-results
+            playwright-report
