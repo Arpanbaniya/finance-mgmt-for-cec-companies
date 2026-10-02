@@ -24,6 +24,7 @@
     "db:generate": "drizzle-kit generate",
     "setup:local": "tsx scripts/setup-local.ts",
     "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
+    "outbox:process": "tsx scripts/process-outbox.ts",
     "route-parity": "tsx scripts/route-parity.ts",
     "api:generate": "tsx scripts/generate-openapi.ts",
     "finance-reconcile": "vitest run --project unit tests/unit/accounting.test.ts"

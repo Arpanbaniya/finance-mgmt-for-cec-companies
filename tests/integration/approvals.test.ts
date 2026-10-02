@@ -25,7 +25,7 @@ afterAll(async () => {
   const client = await admin.connect();
   try {
     await client.query("BEGIN"); await client.query("ALTER TABLE audit_events DISABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE approval_policies DISABLE TRIGGER approval_policy_no_delete");
-    for (const table of ["audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=ANY($1::uuid[])`, [[org, otherOrg]]);
+    for (const table of ["alerts", "outbox_events", "audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=ANY($1::uuid[])`, [[org, otherOrg]]);
     await client.query("DELETE FROM organizations WHERE id=ANY($1::uuid[])", [[org, otherOrg]]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [users]);
     await client.query("ALTER TABLE approval_policies ENABLE TRIGGER approval_policy_no_delete"); await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); await admin.end(); await databasePool().end(); }

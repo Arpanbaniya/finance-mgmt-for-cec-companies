@@ -5,6 +5,8 @@ import { DomainError } from "@/domain/errors";
 import { canonicalJSON, contentHash, type JsonValue } from "@/domain/approvals";
 import { withScope } from "@/features/identity/scope";
 import { audit } from "@/features/platform/service";
+import { enqueuePolicyActivation } from "@/features/jobs/outbox";
+import { replay, remember } from "@/features/platform/idempotency";
 import { ApprovalPolicyCreate, ApprovalPolicyDTO, AuditEventDTO, AuditQuery, CommandResult, Transition } from "./contracts";
 
 type Row = Record<string, unknown>;
@@ -17,16 +19,6 @@ async function selected(client: PoolClient, org: string, entity: string, id: str
   const result = await client.query(`SELECT * FROM approval_policies WHERE organization_id=$1 AND legal_entity_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`, [org, entity, id]);
   if (!result.rowCount) throw new DomainError("NOT_FOUND", "Approval policy is unavailable.", 404);
   return result.rows[0];
-}
-// The entity is part of the operation namespace. Scope/permission is checked even on replay.
-async function replay(client: PoolClient, org: string, user: string, operation: string, key: string, hash: string) {
-  const prior = await client.query("SELECT * FROM idempotency_results WHERE organization_id=$1 AND principal_id=$2 AND operation=$3 AND key=$4", [org, user, operation, key]);
-  if (!prior.rowCount) return null;
-  if (prior.rows[0].request_hash !== hash) throw new DomainError("IDEMPOTENCY_CONFLICT", "This key was used with a different request.", 409);
-  return prior.rows[0].response;
-}
-async function remember(client: PoolClient, org: string, user: string, operation: string, key: string, hash: string, resource: string, response: unknown) {
-  await client.query("INSERT INTO idempotency_results(id,organization_id,principal_id,operation,key,request_hash,resource_id,response) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [randomUUID(), org, user, operation, key, hash, resource, JSON.stringify(response)]);
 }
 export async function listPolicies(user: string, org: string, entity: string, limit: number, cursor?: string) {
   return withScope(user, org, entity, "approvals.read", async client => {
@@ -66,6 +58,7 @@ export async function activatePolicy(user: string, org: string, entity: string, 
     await client.query("UPDATE approval_policies SET status='active',version=version+1,activated_by=$2,activated_at=now(),activation_reason=$3 WHERE id=$1", [id, user, command.reason ?? null]);
     const response = CommandResult.parse({ resourceId: id, version: version + 1, status: "active", requestId });
     await audit(client, org, user, "approval_policy.activate", id, requestId, entity);
+    await enqueuePolicyActivation(client, org, entity, id);
     await remember(client, org, user, operation, key, hash, id, response); return response;
   });
 }

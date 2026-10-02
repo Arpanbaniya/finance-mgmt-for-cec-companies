@@ -2,10 +2,11 @@ import { config } from "dotenv";
 import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Pool } from "pg";
+import { runtimeRole } from "../db/runtime-config";
 config({ path: ".env.local", quiet: true });
 if (!process.env.MIGRATION_DATABASE_URL || !process.env.DATABASE_URL) throw new Error("Both migration and runtime database URLs are required.");
+runtimeRole(process.env.DATABASE_URL, process.env.SUPABASE_PROJECT_REF);
 const runtime = new URL(process.env.DATABASE_URL);
-if (decodeURIComponent(runtime.username) !== "kaamledger_app") throw new Error("Expected the restricted kaamledger_app runtime role.");
 const pool = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
 const client = await pool.connect();
 try {
@@ -37,6 +38,11 @@ try {
   await client.query("GRANT SELECT,INSERT,UPDATE ON approval_policies TO kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.can_manage_policy(uuid),app_security.can_activate_policy(uuid),app_security.lock_policy_scope(uuid,uuid) TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT ON audit_events,idempotency_results TO kaamledger_app");
+  await client.query("GRANT SELECT,INSERT,UPDATE ON outbox_events TO kaamledger_app");
+  await client.query("GRANT SELECT,UPDATE ON alerts TO kaamledger_app");
+  await client.query("REVOKE INSERT ON alerts FROM kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.policy_alert_recipient_eligible(uuid,uuid,text) TO kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.emit_policy_alert(uuid,uuid) TO kaamledger_app");
   await client.query("REVOKE CREATE ON SCHEMA public FROM PUBLIC");
   await client.query("COMMIT");
   console.log("Migrations committed; restricted runtime grants verified.");

@@ -2,6 +2,7 @@ import { test, expect, clientHeaders } from "./fixtures";
 import { config } from "dotenv";
 import { randomUUID, randomBytes } from "node:crypto";
 import { Pool } from "pg";
+import { processPolicyBatch } from "@/features/jobs/outbox";
 config({ path: ".env.local", quiet: true });
 process.env.INITIAL_SETUP = "true";
 const org = randomUUID(), password = randomBytes(24).toString("base64url"), makerEmail = `policy-maker-${randomUUID()}@example.invalid`, reviewerEmail = `policy-reviewer-${randomUUID()}@example.invalid`, financeEmail = `policy-finance-${randomUUID()}@example.invalid`;
@@ -23,7 +24,7 @@ test.afterAll(async () => {
   const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL }), client = await admin.connect();
   try {
     await client.query("BEGIN"); await client.query("ALTER TABLE audit_events DISABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE approval_policies DISABLE TRIGGER approval_policy_no_delete");
-    for (const table of ["audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
+    for (const table of ["alerts", "outbox_events", "audit_events", "idempotency_results", "approval_policies", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
     await client.query("DELETE FROM organizations WHERE id=$1", [org]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [[maker, reviewer, finance]]);
     await client.query("ALTER TABLE approval_policies ENABLE TRIGGER approval_policy_no_delete"); await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); await admin.end(); }
@@ -72,6 +73,23 @@ test("maker saves exact ranges; independent reviewer activates, resolves stale s
     const replay = await reviewPage.request.post(`${base}/${next.id}/activate`, activation); expect(replay.status()).toBe(200); expect((await replay.json()).data).toEqual((await firstActivation.json()).data);
     await staleCard.getByRole("button", { name: "Activate policy", exact: true }).click(); const stale = reviewPage.waitForResponse(r => r.status() === 412 && r.url().endsWith(`${base}/${next.id}/activate`)); await reviewPage.getByRole("button", { name: "Confirm activation", exact: true }).click(); await stale; await expect(staleCard.getByRole("alert")).toContainText("Reload");
     await staleCard.getByRole("button", { name: "Reload current policy", exact: true }).click(); await expect(staleCard.getByText("active", { exact: true })).toBeVisible();
+    expect(await processPolicyBatch(reviewer, org, entity.id, 10)).toEqual({ delivered: 2, cancelled: 0, leaseLost: 0, deferred: 0 });
+    const alertBase = `/api/v1/orgs/${org}/entities/${entity.id}/alerts`;
+    expect((await (await reviewPage.request.get(alertBase)).json()).data).toEqual([]);
+    expect((await page.request.get(`${alertBase}?includePrivateValues=true`)).status()).toBe(422);
+    const alertPage = await (await page.request.get(`${alertBase}?limit=1`)).json(); expect(alertPage.data).toHaveLength(1); expect(alertPage.meta.nextCursor).not.toBeNull();
+    const notification = alertPage.data[0], ackUrl = `${alertBase}/${notification.id}/acknowledge`;
+    expect((await reviewPage.request.post(ackUrl, { headers: { "If-Match": '"1"', "Idempotency-Key": randomUUID() }, data: { reason: "Seen" } })).status()).toBe(404);
+    expect((await page.request.post(ackUrl, { headers: { "Idempotency-Key": randomUUID() }, data: { reason: "Seen" } })).status()).toBe(428);
+    expect((await page.request.post(ackUrl, { headers: { "If-Match": '"1"', "Idempotency-Key": randomUUID() }, data: { reason: "Seen", recipientId: reviewer } })).status()).toBe(422);
+    await page.reload(); const notificationCard = page.getByLabel(`Policy activation notification ${notification.policyId}`, { exact: true });
+    await notificationCard.getByLabel("Acknowledgement reason", { exact: true }).fill("Read independent activation notice");
+    const ackResponse = page.waitForResponse(r => r.url().endsWith(ackUrl) && r.request().method() === "POST");
+    await notificationCard.getByRole("button", { name: "Acknowledge notification", exact: true }).click(); const ack = await ackResponse;
+    expect(ack.status()).toBe(200); expect(ack.headers().etag).toBe('"2"'); expect((await ack.json()).data.status).toBe("acknowledged");
+    await expect(notificationCard.getByText("Acknowledged", { exact: true })).toBeVisible(); await page.reload(); await expect(notificationCard.getByText("Acknowledged", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 360, height: 800 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: ".local/screenshots/policy-notifications-mobile.png", fullPage: true });
     const auditBase = `/api/v1/orgs/${org}/entities/${entity.id}/audit-events`;
     const history = (await (await reviewPage.request.get(`${auditBase}?action=approval_policy.activate&limit=100`)).json()).data; expect(history).toHaveLength(2); expect(history.every((event: { actorId: string; action: string }) => event.actorId === reviewer && event.action === "approval_policy.activate")).toBe(true);
     expect((await (await reviewPage.request.get(`${auditBase}?action=membership.create`)).json()).data).toEqual([]);

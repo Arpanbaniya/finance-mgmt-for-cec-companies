@@ -50,6 +50,22 @@ export const auditEvents = pgTable("audit_events", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id"), actorId: text("actor_id").notNull(),
   action: text("action").notNull(), targetId: uuid("target_id").notNull(), requestId: text("request_id").notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow()
 });
+export const outboxEvents = pgTable("outbox_events", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
+  kind: text("kind").notNull(), policyId: uuid("policy_id").notNull(), sourceVersion: integer("source_version").notNull(), sourceHash: text("source_hash").notNull(),
+  principalId: text("principal_id").notNull().references(() => user.id), recipientId: text("recipient_id").notNull().references(() => user.id),
+  status: text("status").notNull().default("pending"), attempts: integer("attempts").notNull().default(0), availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+  leaseToken: uuid("lease_token"), leaseUntil: timestamp("lease_until", { withTimezone: true }), lastErrorCode: text("last_error_code"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), completedAt: timestamp("completed_at", { withTimezone: true }),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), unique().on(t.organizationId, t.legalEntityId, t.kind, t.policyId, t.sourceVersion),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.policyId], foreignColumns: [approvalPolicies.organizationId, approvalPolicies.legalEntityId, approvalPolicies.id] })]);
+export const alerts = pgTable("alerts", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
+  eventId: uuid("event_id").notNull(), effectKey: text("effect_key").notNull(), recipientId: text("recipient_id").notNull().references(() => user.id), policyId: uuid("policy_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+  acknowledgementReason: text("acknowledgement_reason"), version: integer("version").notNull().default(1),
+}, t => [unique().on(t.eventId, t.effectKey), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.eventId], foreignColumns: [outboxEvents.organizationId, outboxEvents.legalEntityId, outboxEvents.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.policyId], foreignColumns: [approvalPolicies.organizationId, approvalPolicies.legalEntityId, approvalPolicies.id] })]);
 export const idempotencyResults = pgTable("idempotency_results", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), principalId: text("principal_id").notNull(), operation: text("operation").notNull(), key: text("key").notNull(),
   requestHash: text("request_hash").notNull(), resourceId: uuid("resource_id").notNull(), response: jsonb("response").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()

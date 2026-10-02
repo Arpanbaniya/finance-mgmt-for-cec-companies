@@ -10,4 +10,4 @@ it("rejects client scope, computed totals and future modules", () => {
 it("PATCH excludes identity and requires an actual edit", () => { expect(EntityPatch.safeParse({}).success).toBe(false); expect(EntityPatch.safeParse({ id: "changed" }).success).toBe(false); expect(EntityPatch.safeParse({ name: "New" }).success).toBe(true); });
 it("limits pagination and denies arbitrary query fields", () => { expect(ListQuery.safeParse({ limit: "101" }).success).toBe(false); expect(ListQuery.safeParse({ sort: "sql" }).success).toBe(false); });
 it("uses a finite role registry and does not allow future site grants", () => { expect(MembershipChange.safeParse({ userId: "a", roleIds: ["super_admin"], allowedEntityIds: [], siteIds: [], active: true }).success).toBe(false); });
-it("all shipped operations match the 256-operation planned catalog", () => { expect(parity()).toEqual({ planned: 256, implemented: 14, remaining: 242 }); });
+it("all shipped operations match the 256-operation planned catalog", () => { expect(parity()).toEqual({ planned: 256, implemented: 16, remaining: 240 }); });

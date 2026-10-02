@@ -2,9 +2,12 @@ import type { PoolClient } from "pg";
 import { databasePool } from "@/db/client";
 import { permissionsFor } from "@/domain/permissions";
 import { DomainError } from "@/domain/errors";
+import { retryTransaction } from "@/features/platform/transaction-retry";
 
 export async function withScope<T>(userId: string, organizationId: string, entityId: string | null, permission: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  return retryTransaction(async () => {
   const client = await databasePool().connect();
+  let broken: Error | undefined;
   try {
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.user_id',$1,true),set_config('app.org_id',$2,true),set_config('app.entity_id',$3,true)", [userId, organizationId, entityId ?? ""]);
@@ -17,7 +20,9 @@ export async function withScope<T>(userId: string, organizationId: string, entit
     await client.query("COMMIT");
     return result;
   } catch (e) {
-    await client.query("ROLLBACK");
+    try { await client.query("ROLLBACK"); }
+    catch { broken = new Error("Transaction rollback failed."); }
     throw e;
-  } finally { client.release(); }
+  } finally { client.release(broken); }
+  });
 }

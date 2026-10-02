@@ -1,10 +1,12 @@
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
+import { runtimeRole } from "./runtime-config";
 
 let pool: Pool | undefined;
 export function databasePool(): Pool {
   if (!process.env.DATABASE_URL) throw new Error("Database is not configured.");
+  runtimeRole(process.env.DATABASE_URL, process.env.SUPABASE_PROJECT_REF);
   pool ??= new Pool({ connectionString: process.env.DATABASE_URL, max: 5, idleTimeoutMillis: 20000, connectionTimeoutMillis: 5000 });
   return pool;
 }

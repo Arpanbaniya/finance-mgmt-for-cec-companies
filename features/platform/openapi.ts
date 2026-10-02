@@ -2,12 +2,13 @@ import { z } from "zod";
 import { EntityCreate, EntityPatch, EntityDTO, MembershipChange, MembershipDTO, HealthDTO, ListQuery } from "./contracts";
 import { catalogRows, implementedRoutes } from "@/scripts/route-parity";
 import { ApprovalPolicyCreate, ApprovalPolicyDTO, AuditQuery, AuditEventDTO, CommandResult, Transition } from "@/features/approvals/contracts";
+import { AlertDTO, AlertCommandResult, Reason } from "@/features/alerts/contracts";
 
 const SessionContext = z.strictObject({ user: z.strictObject({ id: z.string(), name: z.string(), email: z.email() }), memberships: z.array(MembershipDTO) });
 const meta = z.strictObject({ requestId: z.string(), version: z.number().int().optional(), nextCursor: z.uuid().nullable().optional() });
 const error = z.strictObject({ error: z.strictObject({ code: z.string(), message: z.string(), requestId: z.string(), retryable: z.boolean(), fieldErrors: z.array(z.strictObject({ path: z.string(), message: z.string() })) }) });
-const responses = { Health: HealthDTO, SessionContext, Entity: EntityDTO, EntityList: z.array(EntityDTO), Membership: MembershipDTO, MembershipList: z.array(MembershipDTO), ApprovalPolicy: ApprovalPolicyDTO, ApprovalPolicyList: z.array(ApprovalPolicyDTO), AuditEventList: z.array(AuditEventDTO), CommandResult };
-const requests = { EntityCreate, EntityPatch, MembershipChange, ListQuery, ApprovalPolicyCreate, AuditQuery, Transition, NoBody: z.strictObject({}) };
+const responses = { Health: HealthDTO, SessionContext, Entity: EntityDTO, EntityList: z.array(EntityDTO), Membership: MembershipDTO, MembershipList: z.array(MembershipDTO), ApprovalPolicy: ApprovalPolicyDTO, ApprovalPolicyList: z.array(ApprovalPolicyDTO), AuditEventList: z.array(AuditEventDTO), AlertList: z.array(AlertDTO), CommandResult: z.discriminatedUnion("status", [CommandResult, AlertCommandResult]) };
+const requests = { EntityCreate, EntityPatch, MembershipChange, ListQuery, ApprovalPolicyCreate, AuditQuery, Transition, Reason, NoBody: z.strictObject({}) };
 export function openapi() {
   const schemas: Record<string, unknown> = { Error: z.toJSONSchema(error, { unrepresentable: "any" }) };
   for (const [name, schema] of Object.entries(requests)) schemas[name] = z.toJSONSchema(schema, { unrepresentable: "any" });
