@@ -30,7 +30,12 @@ export function implementedRoutes() {
       }
     }
   }
-  walk("app/api"); return results;
+  walk("app/api");
+  // Filesystem enumeration differs between Windows and Linux. Contracts must not.
+  return results.sort((a, b) => {
+    const left = `${a.path} ${a.method}`, right = `${b.path} ${b.method}`;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
 }
 export function parity() {
   const catalog = catalogRows(), keys = new Set(catalog.map(r => `${r.method} ${r.path}`));
