@@ -39,6 +39,9 @@ try {
   await client.query("GRANT EXECUTE ON FUNCTION app_security.can_manage_policy(uuid),app_security.can_activate_policy(uuid),app_security.lock_policy_scope(uuid,uuid) TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT ON audit_events,idempotency_results TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT ON job_retries TO kaamledger_app");
+  await client.query("GRANT SELECT,INSERT,UPDATE ON accounts TO kaamledger_app");
+  await client.query("GRANT SELECT ON account_versions TO kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.can_read_accounts(uuid),app_security.can_manage_accounts(uuid) TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT,UPDATE ON outbox_events TO kaamledger_app");
   await client.query("GRANT SELECT,UPDATE ON alerts TO kaamledger_app");
   await client.query("REVOKE INSERT ON alerts FROM kaamledger_app");

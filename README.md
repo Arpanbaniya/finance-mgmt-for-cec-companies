@@ -40,6 +40,8 @@ Open **Approval policies and audit** on a company card to create immutable NPR a
 
 **Your policy notifications** contains private activation alerts delivered to the draft creator. Acknowledge with a short reason; acknowledgement changes only notification metadata, not the policy or any financial document. Reload notifications after a version conflict.
 
+Open **Chart of accounts** on a company card to browse account metadata. Finance managers can create accounts, edit names/parents/report mappings and archive unused accounts with a reason. Account codes are uppercase and unique within a company; codes, types, normal sides and control classifications cannot change after creation. Parent accounts must be active ordinary accounts of the same type. The parent picker shows eligible accounts from the current page; cycles are rejected when saving. Choose **Root account** to clear a parent. Active children must be moved or archived before their parent can be archived. Archived codes stay reserved and all master versions are retained. Accountants and auditors have read-only access. Reload the current account after a version conflict. Account setup does not create balances, post journals or activate statutory policies.
+
 ### Notification delivery
 
 Activation commits a durable event alongside the policy change. An operator runs an explicit scoped batch with restricted runtime credentials:
@@ -84,4 +86,4 @@ Keep the hosted URLs in a separate deployment/operator environment. Do not repla
 
 Configure a private S3-compatible bucket with `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. Use HTTPS outside loopback development. Do not upload local credentials or service data.
 
-The current application supports company setup, membership administration, approval-policy setup and scoped audit browsing. Accounting, payroll, billing and financial document workflows are under development. Live use requires reviewed company policies and the applicable release acceptance checks.
+The current application supports company setup, membership administration, approval-policy setup, chart-of-accounts metadata and scoped audit browsing. Posting, fiscal calendars, payroll, billing and financial document workflows are under development. Live use requires reviewed company policies and the applicable release acceptance checks.

@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Building2 } from "lucide-react";
 import Link from "next/link";
 
-export function EntityCard({ entity, canEdit, canReadPolicies }: { entity: z.infer<typeof EntityDTO>; canEdit: boolean; canReadPolicies: boolean }) {
+export function EntityCard({ entity, canEdit, canReadPolicies, canReadAccounts }: { entity: z.infer<typeof EntityDTO>; canEdit: boolean; canReadPolicies: boolean; canReadAccounts: boolean }) {
   const router = useRouter();
   const [record, setRecord] = useState(entity), [editing, setEditing] = useState(false), [pending, setPending] = useState(false);
   const [error, setError] = useState(""), [conflict, setConflict] = useState(false);
@@ -44,6 +44,7 @@ export function EntityCard({ entity, canEdit, canReadPolicies }: { entity: z.inf
       {canEdit && !editing ? <Button variant="outline" size="sm" onClick={() => setEditing(true)} aria-label={`Edit ${record.name}`}>Edit</Button> : null}</div>
     </div>
     {canReadPolicies ? <div className="mt-4"><Button variant="outline" size="sm" asChild><Link href={`/workspace/controls?org=${entity.organizationId}&entity=${entity.id}`}>Approval policies and audit</Link></Button></div> : null}
+    {canReadAccounts ? <div className="mt-3"><Button variant="outline" size="sm" asChild><Link href={`/workspace/accounts?org=${entity.organizationId}&entity=${entity.id}`}>Chart of accounts</Link></Button></div> : null}
     {editing ? <form key={record.version} onSubmit={save} aria-label="Edit company" className="mt-5 space-y-4 border-t pt-5">
       <p className="text-xs text-muted-foreground">Company details · version {record.version}. Scope, currency and policy are not editable here.</p>
       <div className="space-y-2"><Label htmlFor={`name-${entity.id}`}>Company name</Label><Input id={`name-${entity.id}`} name="name" defaultValue={record.name} required maxLength={200} disabled={pending} /></div>
