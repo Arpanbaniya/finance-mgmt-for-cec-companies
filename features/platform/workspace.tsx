@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { z } from "zod";
 import type { EntityDTO, MembershipDTO } from "./contracts";
 import { Brand } from "@/components/brand";
@@ -33,6 +34,7 @@ export function Workspace({ name, organizations }: { name: string; organizations
     {organizations.length ? <div className="mb-7 flex flex-wrap gap-2" aria-label="Organization selection">{organizations.map((org, i) => <Button key={org.organizationId} variant={orgId === org.organizationId ? "default" : "outline"} onClick={() => { requestKey.current = null; setOrgId(org.organizationId); }}>Organization {i + 1}</Button>)}</div> : <p className="rounded-lg border p-5">Your account has no active organization membership. Contact your administrator.</p>}
     <div className="grid gap-7 lg:grid-cols-[1fr_360px]"><section aria-label="Legal entities"><h2 className="mb-4 text-lg font-medium">Legal entities</h2>{selected?.entities.length ? <div className="space-y-3">{selected.entities.map(e => <EntityCard key={`${e.id}-${e.version}`} entity={e} canEdit={Boolean(canCreate)} />)}</div> : <div className="rounded-xl border border-dashed p-8 text-center"><Building2 className="mx-auto mb-4 size-7 text-muted-foreground" /><h3 className="font-medium">No legal entities yet</h3><p className="mt-2 text-sm text-muted-foreground">Each legal entity will keep its own accounts, fiscal periods and financial records.</p></div>}</section>
     {canCreate ? <Card className="self-start"><CardContent className="pt-6"><h2 className="text-lg font-medium">Create a legal entity</h2><p className="mb-5 mt-2 text-sm leading-6 text-muted-foreground">Start with a fictional company. Live policy activation comes after review.</p><form onSubmit={create} onChange={() => { requestKey.current = null; }} className="space-y-4"><div className="space-y-2"><Label htmlFor="entity-name">Legal entity name</Label><Input id="entity-name" name="name" maxLength={200} required placeholder="Everest Workforce Services Pvt. Ltd." /></div>{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}<Button type="submit" className="w-full" disabled={pending}>{pending ? "Saving…" : <><Plus size={16} />Create entity</>}</Button></form></CardContent></Card> : null}</div>
+    {canCreate ? <div className="mt-8"><Button variant="outline" asChild><Link href={`/workspace/members?org=${orgId}`}>Manage memberships</Link></Button></div> : null}
     <p className="mt-10 border-t pt-6 text-xs text-muted-foreground">Company setup is available. Accounting, payroll and billing will be added through the Phase 1 work packages.</p>
   </main>;
 }

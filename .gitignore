@@ -9,3 +9,12 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 *.log
+
+# Private planning sources and local engineering registers
+/AGENTS.md
+/*MASTER_PROMPT*.md
+/KAAMLEDGER_*/
+/docs/spec/
+/docs/PROGRESS.md
+/docs/ASSUMPTIONS.md
+/docs/operations/delivery.md

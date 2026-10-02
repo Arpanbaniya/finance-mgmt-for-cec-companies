@@ -4,3 +4,10 @@ test-results
 playwright-report
 .env.local
 coverage
+AGENTS.md
+*MASTER_PROMPT*.md
+KAAMLEDGER_*
+docs/spec
+docs/PROGRESS.md
+docs/ASSUMPTIONS.md
+docs/operations/delivery.md

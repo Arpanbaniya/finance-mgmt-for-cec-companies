@@ -4,7 +4,7 @@ import { Pool } from "pg";
 import { beforeAll, afterAll, expect, it } from "vitest";
 import { databasePool } from "@/db/client";
 import { listEntities, getEntity, createEntity, patchEntity } from "@/features/platform/service";
-import { changeMember } from "@/features/platform/memberships";
+import { changeMember, listMembers } from "@/features/platform/memberships";
 import { sessionMemberships } from "@/features/identity/session";
 import { withScope } from "@/features/identity/scope";
 import { EntityCreate } from "@/features/platform/contracts";
@@ -84,6 +84,26 @@ it("nullable identifiers clear explicitly; omitted identifiers remain unchanged"
 });
 it("administrators cannot alter their own roles", async () => {
   await expect(changeMember(maker, orgA, { userId: maker, roleIds: ["finance_manager"], allowedEntityIds: [entityA], siteIds: [], active: true }, randomUUID(), { key: randomUUID() })).rejects.toMatchObject({ code: "SELF_ESCALATION" });
+});
+it("membership creation replay is atomic and stale changes preserve grants", async () => {
+  const input = { userId: outsider, roleIds: ["accountant" as const], allowedEntityIds: [entityA], siteIds: [], active: true }, key = randomUUID();
+  const [a, b] = await Promise.all([changeMember(maker, orgA, input, randomUUID(), { key }), changeMember(maker, orgA, input, randomUUID(), { key })]);
+  expect(a).toEqual(b);
+  expect((await admin.query("SELECT * FROM audit_events WHERE target_id=$1", [a.id])).rowCount).toBe(1);
+  await expect(changeMember(maker, orgA, { ...input, active: false }, randomUUID(), { key })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  const updated = await changeMember(maker, orgA, { ...input, roleIds: ["auditor"] }, randomUUID(), { id: a.id, version: 1 });
+  expect(updated.version).toBe(2);
+  await expect(changeMember(maker, orgA, { ...input, active: false }, randomUUID(), { id: a.id, version: 1 })).rejects.toMatchObject({ status: 412 });
+  expect((await listMembers(maker, orgA, 100)).data.find(m => m.id === a.id)).toEqual(updated);
+  expect(await changeMember(maker, orgA, input, randomUUID(), { key })).toEqual(a);
+  await expect(listMembers(outsider, orgA, 25)).rejects.toMatchObject({ status: 403 });
+});
+it("unknown identities, immutable users, and cross-organization memberships are rejected", async () => {
+  const input = { userId: outsider, roleIds: ["accountant" as const], allowedEntityIds: [], siteIds: [], active: true };
+  await expect(changeMember(maker, orgA, { ...input, userId: "not-provisioned" }, randomUUID(), { key: randomUUID() })).rejects.toMatchObject({ code: "INVALID_IDENTITY" });
+  const member = (await listMembers(maker, orgA, 100)).data.find(m => m.userId === outsider)!;
+  await expect(changeMember(maker, orgA, { ...input, userId: second }, randomUUID(), { id: member.id, version: member.version })).rejects.toMatchObject({ code: "IMMUTABLE_IDENTITY" });
+  await expect(changeMember(maker, orgB, input, randomUUID(), { id: member.id, version: member.version })).rejects.toMatchObject({ status: 404 });
 });
 it("revoked membership disappears on the next authorized request", async () => {
   expect(await sessionMemberships(second)).toHaveLength(1);

@@ -30,6 +30,12 @@ Open http://localhost:3000. Generated credentials and service data remain in ign
 
 To create the initial organization administrator, set `BOOTSTRAP_EMAIL` and `BOOTSTRAP_PASSWORD` in your process environment, then run `pnpm bootstrap:admin`. Passwords must contain at least 14 characters. Optionally set `BOOTSTRAP_ORGANIZATION`. Public signup is disabled. Organization administration does not grant financial approval.
 
+## Usage
+
+Sign in with an operator-provisioned account and select an organization. Organization administrators can create and edit legal entities from the company workspace.
+
+Use **Manage memberships** to assign an existing verified user ID, roles and visible legal-entity grants. Accounts are provisioned separately; no invitation is sent. Another administrator must change your own access. Revoking a membership blocks organization access on the next authorized request and retains history. If an edit conflicts with a newer version, reload current memberships before retrying.
+
 ## Checks
 
 ```sh

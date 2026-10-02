@@ -1,6 +1,6 @@
 # Requirements and traceability
 
-V2 master is the implementation contract. Requirement IDs below freeze all R1 domains. Later releases stay behind design gates. A requirement's existence does not mean its implementation is complete.
+Requirement IDs below freeze all R1 domains. The public API contract is in `docs/contracts/api-catalog.csv`. Later releases stay behind design gates. A requirement's existence does not mean its implementation is complete.
 
 | ID | R1 requirement / reference | Work packages |
 |---|---|---|
@@ -50,7 +50,7 @@ V2 master is the implementation contract. Requirement IDs below freeze all R1 do
 |---|---|---|---|---|
 | R1-SETUP | Local setup/installer, private S3 configuration | scripts/setup-local/install-storage/storage-process; documents/storage-config | unit local-setup/storage-config; real storage authentication/signature/expiry/persistence | infrastructure only; document UI deferred |
 | R1-ENTITY | GET/POST org entities, GET/PATCH entity | legal_entities, organizations, branches; platform/service | integration/security; strict platform contracts | workspace |
-| R1-IDENTITY | Better Auth allowlisted adapter, GET me, GET/POST/PATCH memberships | auth tables, memberships; identity/auth/session/scope; platform/memberships | integration/authentication/security; browser company-setup | sign-in, workspace |
+| R1-IDENTITY | Better Auth allowlisted adapter, GET me, GET/POST/PATCH memberships | auth tables, memberships; identity/auth/session/scope; platform/memberships | integration/authentication/security; browser company-setup grants/edit/conflict/revocation | sign-in, workspace, membership administration |
 | R1-ISOLATION | Every entity/membership operation | migration 0002-security; withScope, composite branch FK | runtime nonowner/no BYPASSRLS, unscoped SQL, guessed IDs, pooled reuse, revocation, last admin | server-enforced |
 | R1-API (partial) | Nine shipped catalog operations | Zod contracts; generated OpenAPI; route parity | contract/platform | errors and ETags |
 | R1-VALUES (started) | Pure domain functions; no posting API yet | domain/money/dates/accounting | unit money/dates/accounting; exact fixture A | no financial screen yet |
