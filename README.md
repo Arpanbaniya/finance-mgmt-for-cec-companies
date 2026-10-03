@@ -86,6 +86,8 @@ For Supabase, set `SUPABASE_PROJECT_REF` and obtain connection details from the 
 
 Keep the hosted URLs in a separate deployment/operator environment. Do not replace `.env.local` with hosted credentials before running database or browser tests. Apply migrations and provision the administrator before using hosted sign-in.
 
+`SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` may be stored as optional Data API configuration. The current application does not use that adapter; these values do not enable database access or replace the existing sign-in system. Replace `[YOUR-PASSWORD]` in a provider connection template in a private operator environment, not in source files. Never use the administrator's `postgres` connection as the web runtime connection.
+
 `GROQ_API_KEY` is an optional server-only configuration reserved for future features. Do not prefix it with `NEXT_PUBLIC_`. Configuring it does not enable model calls or change current workflows.
 
 Configure a private S3-compatible bucket with `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. Use HTTPS outside loopback development. Do not upload local credentials or service data.

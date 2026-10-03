@@ -1,4 +1,5 @@
-import { pgTable, text, boolean, timestamp, uuid, integer, bigint, jsonb, date, unique, foreignKey } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, boolean, timestamp, uuid, integer, bigint, jsonb, date, numeric, customType, primaryKey, unique, foreignKey } from "drizzle-orm/pg-core";
 
 // Better Auth owns authentication tables; business authorization is separate.
 export const user = pgTable("auth_user", {
@@ -38,7 +39,7 @@ export const legalEntities = pgTable("legal_entities", {
 }, t => [unique().on(t.organizationId, t.id)]);
 export const branches = pgTable("branches", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), name: text("name").notNull()
-}, t => [foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
   code: text("code").notNull(), name: text("name").notNull(), type: text("type").notNull(), normalSide: text("normal_side").notNull(), parentId: uuid("parent_id"),
@@ -84,6 +85,23 @@ export const documentNumbers = pgTable("document_numbers", {
   sourceId: uuid("source_id").notNull(), eventKind: text("event_kind").notNull(), postingDate: date("posting_date").notNull(), sequenceNumber: bigint("sequence_number", { mode: "bigint" }).notNull(), number: text("number").notNull(),
   createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [unique().on(t.organizationId, t.legalEntityId, t.documentType, t.sourceId, t.eventKind), unique().on(t.organizationId, t.legalEntityId, t.number), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.fiscalYearId, t.documentType], foreignColumns: [documentSeries.organizationId, documentSeries.legalEntityId, documentSeries.fiscalYearId, documentSeries.documentType] })]);
+const transactionId = customType<{ data: string }>({ dataType: () => "xid8" });
+export const journalEntries = pgTable("journal_entries", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
+  sourceType: text("source_type").notNull(), sourceId: uuid("source_id").notNull(), eventKind: text("event_kind").notNull(), status: text("status").notNull(),
+  postingDate: date("posting_date").notNull(), documentDate: date("document_date").notNull(), description: text("description").notNull(), currency: text("currency").notNull(),
+  numberId: uuid("number_id").notNull().unique().references(() => documentNumbers.id), number: text("number").notNull(), fiscalPeriodId: uuid("fiscal_period_id").notNull(), payload: jsonb("payload").notNull(),
+  totalDebit: numeric("total_debit", { precision: 20, scale: 2 }).notNull(), totalCredit: numeric("total_credit", { precision: 20, scale: 2 }).notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), createdTransaction: transactionId("created_transaction").notNull().default(sql`pg_current_xact_id()`),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), unique().on(t.organizationId, t.legalEntityId, t.sourceType, t.sourceId, t.eventKind), unique().on(t.organizationId, t.legalEntityId, t.number),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.fiscalPeriodId], foreignColumns: [fiscalPeriods.organizationId, fiscalPeriods.legalEntityId, fiscalPeriods.id] })]);
+export const journalLines = pgTable("journal_lines", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), journalId: uuid("journal_id").notNull(), ordinal: integer("ordinal").notNull(),
+  accountId: uuid("account_id").notNull(), accountVersion: integer("account_version").notNull(), debit: numeric("debit", { precision: 20, scale: 2 }).notNull(), credit: numeric("credit", { precision: 20, scale: 2 }).notNull(), branchId: uuid("branch_id"),
+}, t => [primaryKey({ columns: [t.journalId, t.ordinal] }), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.journalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.accountId, t.accountVersion], foreignColumns: [accountVersions.organizationId, accountVersions.legalEntityId, accountVersions.accountId, accountVersions.version] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.branchId], foreignColumns: [branches.organizationId, branches.legalEntityId, branches.id] })]);
 export const approvalPolicies = pgTable("approval_policies", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
   definition: jsonb("definition").notNull(), canonicalPayload: text("canonical_payload").notNull(), contentHash: text("content_hash").notNull(),
