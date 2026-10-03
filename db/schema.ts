@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, uuid, integer, bigint, jsonb, unique, foreignKey } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, uuid, integer, bigint, jsonb, date, unique, foreignKey } from "drizzle-orm/pg-core";
 
 // Better Auth owns authentication tables; business authorization is separate.
 export const user = pgTable("auth_user", {
@@ -54,6 +54,36 @@ export const accountVersions = pgTable("account_versions", {
   organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), accountId: uuid("account_id").notNull(),
   version: integer("version").notNull(), snapshot: jsonb("snapshot").notNull(), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [unique().on(t.organizationId, t.legalEntityId, t.accountId, t.version), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.accountId], foreignColumns: [accounts.organizationId, accounts.legalEntityId, accounts.id] })]);
+export const fiscalYears = pgTable("fiscal_years", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), label: text("label").notNull(),
+  startDate: date("start_date").notNull(), endDateExclusive: date("end_date_exclusive").notNull(), periodCount: integer("period_count").notNull(),
+  retainedEarningsAccountId: uuid("retained_earnings_account_id").notNull(), retainedEarningsAccountVersion: integer("retained_earnings_account_version").notNull(),
+  version: integer("version").notNull().default(1), createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.retainedEarningsAccountId, t.retainedEarningsAccountVersion], foreignColumns: [accountVersions.organizationId, accountVersions.legalEntityId, accountVersions.accountId, accountVersions.version] })]);
+export const fiscalPeriods = pgTable("fiscal_periods", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), fiscalYearId: uuid("fiscal_year_id").notNull(), ordinal: integer("ordinal").notNull(),
+  startDate: date("start_date").notNull(), endDateExclusive: date("end_date_exclusive").notNull(), state: text("state").notNull().default("open"), version: integer("version").notNull().default(1),
+  closedAt: timestamp("closed_at", { withTimezone: true }), closeSnapshotId: uuid("close_snapshot_id"), createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), unique().on(t.fiscalYearId, t.ordinal), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.fiscalYearId], foreignColumns: [fiscalYears.organizationId, fiscalYears.legalEntityId, fiscalYears.id] })]);
+export const accountPurposes = pgTable("account_purposes", { purpose: text("purpose").primaryKey(), accountType: text("account_type").notNull(), controlType: text("control_type") });
+export const accountMappingRevisions = pgTable("account_mapping_revisions", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), version: integer("version").notNull(), effectiveFrom: date("effective_from").notNull(),
+  reason: text("reason").notNull(), createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), unique().on(t.organizationId, t.legalEntityId, t.version), unique().on(t.organizationId, t.legalEntityId, t.effectiveFrom), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
+export const accountMappingEntries = pgTable("account_mapping_entries", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), revisionId: uuid("revision_id").notNull(), purpose: text("purpose").notNull().references(() => accountPurposes.purpose),
+  accountId: uuid("account_id").notNull(), accountVersion: integer("account_version").notNull(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.revisionId, t.purpose), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.revisionId], foreignColumns: [accountMappingRevisions.organizationId, accountMappingRevisions.legalEntityId, accountMappingRevisions.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.accountId, t.accountVersion], foreignColumns: [accountVersions.organizationId, accountVersions.legalEntityId, accountVersions.accountId, accountVersions.version] })]);
+export const documentSeries = pgTable("document_series", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), fiscalYearId: uuid("fiscal_year_id").notNull(), documentType: text("document_type").notNull(), nextNumber: bigint("next_number", { mode: "bigint" }).notNull().default(1n),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.fiscalYearId, t.documentType), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.fiscalYearId], foreignColumns: [fiscalYears.organizationId, fiscalYears.legalEntityId, fiscalYears.id] })]);
+export const documentNumbers = pgTable("document_numbers", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), fiscalYearId: uuid("fiscal_year_id").notNull(), documentType: text("document_type").notNull(),
+  sourceId: uuid("source_id").notNull(), eventKind: text("event_kind").notNull(), postingDate: date("posting_date").notNull(), sequenceNumber: bigint("sequence_number", { mode: "bigint" }).notNull(), number: text("number").notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.documentType, t.sourceId, t.eventKind), unique().on(t.organizationId, t.legalEntityId, t.number), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.fiscalYearId, t.documentType], foreignColumns: [documentSeries.organizationId, documentSeries.legalEntityId, documentSeries.fiscalYearId, documentSeries.documentType] })]);
 export const approvalPolicies = pgTable("approval_policies", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
   definition: jsonb("definition").notNull(), canonicalPayload: text("canonical_payload").notNull(), contentHash: text("content_hash").notNull(),

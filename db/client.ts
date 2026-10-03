@@ -1,7 +1,10 @@
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
 import { runtimeRole } from "./runtime-config";
+
+// PostgreSQL DATE is a calendar value, never an instant in the host timezone.
+types.setTypeParser(1082, value => value);
 
 let pool: Pool | undefined;
 export function databasePool(): Pool {

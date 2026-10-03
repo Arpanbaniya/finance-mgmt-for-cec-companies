@@ -1,6 +1,6 @@
 # Versioned company chart of accounts
 
-Status: account-master vertical slice; K012 remains partial.
+Status: account-master design. Fiscal setup is documented in ADR 0007.
 
 Five catalog operations manage company-scoped account metadata. Codes normalize to uppercase and are permanently reserved per company. Creation binds type, normal side and control role. Patch accepts only name, nullable parent and report mapping. Generic statement sections must match the immutable account type; cash-flow classification remains explicitly unclassified until configured. These fields neither certify a reporting framework nor activate tax policy.
 
@@ -14,4 +14,4 @@ The company screen has labelled create/edit forms, current-page parent selection
 
 Contract, dedicated local PostgreSQL/auth and real Chromium tests cover strict fields, response schemas, duplicate-code races, scope/revocation, stale edits, hierarchy races, direct SQL denial, original-result replay, immutable snapshots, snapshot-failure rollback and browser persistence. Fixture deletion is restricted to generated local test organization IDs. Hosted databases are not reset or migrated by this implementation.
 
-Before K013 financial posting is introduced, add dependencies for account mappings, posted journals, open items and opening balances, and bind journal lines to retained master versions. Fiscal periods, control-purpose mapping and numbering must be implemented and accepted before K012 is complete. No later release starts here.
+ADR 0007 adds fiscal periods, purpose mapping, numbering and calendar/mapping archive dependencies. Before K013 financial posting is introduced, add dependencies for posted journals, open items and opening balances, and bind journal lines to retained master versions. No later release starts here.
