@@ -1,5 +1,7 @@
 # Internal journal foundation
 
+Extension: [Approved-source posting boundary](0009-approved-source-posting.md) adds persisted decisions, source consumption, durable replay and a typed posting event. The raw writer remains owner-only; the original foundation and its independent tests remain intact.
+
 ## Boundary
 
 This is the first K013 slice, not a financial posting release. There is no journal HTTP route or UI, no approval bypass, and no runtime permission to execute `write_manual_journal`. Only a migration/operator connection can exercise this internal primitive. Production operators must not use it to create business journals. Runtime grants explicitly deny posting until a persisted source/approval adapter exists. Local integration fixtures deliberately use privileged credentials to verify the primitive; they are not company approval evidence.

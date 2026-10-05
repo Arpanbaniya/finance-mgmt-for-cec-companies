@@ -14,6 +14,13 @@ const org = randomUUID(), foreignOrg = randomUUID(), entity = randomUUID(), fore
 const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
 const accountIds = new Map<string, string>(); let retained = "", baseYearId = "";
 const scope = <T>(run: (client: import("pg").PoolClient) => Promise<T>) => withScope(finance, org, entity, "periods.create", run);
+// K013 withdraws runtime EXECUTE on the low-level allocator. Its own invariant
+// tests use the trusted primitive boundary; approved runtime posting is tested
+// independently in authorized-posting.test.ts.
+async function numberScope<T>(run:(client:import("pg").PoolClient)=>Promise<T>){const client=await admin.connect();try{
+  await client.query("BEGIN");await client.query("SELECT set_config('app.user_id',$1,true),set_config('app.org_id',$2,true),set_config('app.entity_id',$3,true)",[finance,org,entity]);
+  const result=await run(client);await client.query("COMMIT");return result;
+}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
 const yearInput = (label: string, start: string, end: string) => ({ fiscalYearLabel: label, retainedEarningsAccountId: retained, periods: [{ startDate: start, endDateExclusive: end }] });
 const mappingInput = (effectiveFrom: string) => ({ effectiveFrom, reason: "Reviewed complete R1 purpose mapping", mappings: Object.entries(purposeRules).map(([purpose, [type, control]]) => ({ purpose: purpose as AccountPurpose, accountId: accountIds.get(`${type}|${control}`)! })) });
 beforeAll(async () => {
@@ -103,41 +110,42 @@ it("direct SQL cannot commit incomplete mappings or rewrite preserved entries",a
 });
 it("number allocations serialize, return one source receipt and distinguish document series",async()=>{
   const sourceId=randomUUID(),input={documentType:"journal" as const,sourceId,eventKind:"post" as const,postingDate:"2026-01-01"};
-  const [a,b]=await Promise.all([scope(client=>allocateDocumentNumber(client,org,entity,input)),scope(client=>allocateDocumentNumber(client,org,entity,input))]); expect(a).toEqual(b);expect(a.number).toBe("JOURNAL-20260101-000001");expect(a.sequenceNumber).toBe("1");
-  const distinct=await Promise.all(Array.from({length:4},()=>scope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID()})))); expect(new Set(distinct.map(r=>r.number)).size).toBe(4);
-  const invoice=await scope(client=>allocateDocumentNumber(client,org,entity,{...input,documentType:"invoice",sourceId:randomUUID()}));expect(invoice.sequenceNumber).toBe("1");
-  await expect(scope(client=>allocateDocumentNumber(client,org,entity,{...input,postingDate:"2026-01-02"}))).rejects.toThrow(/another posting date/);
+  const [a,b]=await Promise.all([numberScope(client=>allocateDocumentNumber(client,org,entity,input)),numberScope(client=>allocateDocumentNumber(client,org,entity,input))]); expect(a).toEqual(b);expect(a.number).toBe("JOURNAL-20260101-000001");expect(a.sequenceNumber).toBe("1");
+  const distinct=await Promise.all(Array.from({length:4},()=>numberScope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID()})))); expect(new Set(distinct.map(r=>r.number)).size).toBe(4);
+  const invoice=await numberScope(client=>allocateDocumentNumber(client,org,entity,{...input,documentType:"invoice",sourceId:randomUUID()}));expect(invoice.sequenceNumber).toBe("1");
+  await expect(numberScope(client=>allocateDocumentNumber(client,org,entity,{...input,postingDate:"2026-01-02"}))).rejects.toThrow(/another posting date/);
 });
 it("number and counter roll back together; exclusive boundary chooses the next fiscal year",async()=>{
   const input={documentType:"expense" as const,sourceId:randomUUID(),eventKind:"post" as const,postingDate:"2026-12-31"};
-  await expect(scope(async client=>{await allocateDocumentNumber(client,org,entity,input);throw new Error("Injected posting failure");})).rejects.toThrow(/Injected/);
-  const number=await scope(client=>allocateDocumentNumber(client,org,entity,input));expect(number.sequenceNumber).toBe("1");
-  const next=await scope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID(),postingDate:"2027-01-01"}));expect(next.fiscalYearId).not.toBe(baseYearId);expect(next.sequenceNumber).toBe("1");
-  await expect(scope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID(),postingDate:"2025-12-31"}))).rejects.toThrow(/open fiscal period/);
+  await expect(numberScope(async client=>{await allocateDocumentNumber(client,org,entity,input);throw new Error("Injected posting failure");})).rejects.toThrow(/Injected/);
+  const number=await numberScope(client=>allocateDocumentNumber(client,org,entity,input));expect(number.sequenceNumber).toBe("1");
+  const next=await numberScope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID(),postingDate:"2027-01-01"}));expect(next.fiscalYearId).not.toBe(baseYearId);expect(next.sequenceNumber).toBe("1");
+  await expect(numberScope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID(),postingDate:"2025-12-31"}))).rejects.toThrow(/open fiscal period/);
 });
 it("restricted SQL rejects unscoped numbering, forged counters, receipt mutation and cross-company input",async()=>{
   const client=await databasePool().connect();try{
     expect((await client.query("SELECT * FROM fiscal_years")).rowCount).toBe(0);expect((await client.query("SELECT * FROM document_numbers")).rowCount).toBe(0);
     await client.query("BEGIN");await client.query("SELECT set_config('app.user_id',$1,true)",[finance]);
-    await expect(client.query("SELECT * FROM app_security.allocate_document_number($1,$2,'journal',$3,'post',DATE '2026-01-01')",[org,entity,randomUUID()])).rejects.toThrow(/authority/);await client.query("ROLLBACK");
+    await expect(client.query("SELECT * FROM app_security.allocate_document_number($1,$2,'journal',$3,'post',DATE '2026-01-01')",[org,entity,randomUUID()])).rejects.toThrow(/permission denied/);await client.query("ROLLBACK");
   }finally{client.release();}
   await expect(scope(client=>client.query("UPDATE document_series SET next_number=1 WHERE organization_id=$1",[org]))).rejects.toThrow();
   await expect(scope(client=>client.query("DELETE FROM document_numbers WHERE organization_id=$1",[org]))).rejects.toThrow();
-  await expect(scope(client=>allocateDocumentNumber(client,org,foreignEntity,{documentType:"journal",sourceId:randomUUID(),eventKind:"post",postingDate:"2026-01-01"}))).rejects.toThrow(/authority/);
+  await expect(scope(client=>allocateDocumentNumber(client,org,entity,{documentType:"journal",sourceId:randomUUID(),eventKind:"post",postingDate:"2026-01-01"}))).rejects.toThrow(/permission denied/);
+  await expect(numberScope(client=>allocateDocumentNumber(client,org,foreignEntity,{documentType:"journal",sourceId:randomUUID(),eventKind:"post",postingDate:"2026-01-01"}))).rejects.toThrow(/authority/);
   await admin.query("UPDATE memberships SET roles='[\"accountant\"]' WHERE organization_id=$1 AND user_id=$2",[org,finance]);
   try{await expect(patchAccountMappings(finance,org,entity,mappingInput("2035-01-01"),3,randomUUID())).rejects.toMatchObject({status:403});}finally{await admin.query("UPDATE memberships SET roles='[\"finance_manager\"]' WHERE organization_id=$1 AND user_id=$2",[org,finance]);}
 });
 it("closed periods deny fresh numbers while committed receipt replay remains immutable",async()=>{
   const input={documentType:"transfer" as const,sourceId:randomUUID(),eventKind:"post" as const,postingDate:"2026-02-01"};
-  const receipt=await scope(client=>allocateDocumentNumber(client,org,entity,input));
+  const receipt=await numberScope(client=>allocateDocumentNumber(client,org,entity,input));
   const fixture=await admin.connect();
   try {
     // Local fixture state only; no closing command is exposed by this work package.
     await fixture.query("BEGIN"); await fixture.query("ALTER TABLE fiscal_periods DISABLE TRIGGER fiscal_period_immutable");
     await fixture.query("UPDATE fiscal_periods SET state='hard_closed' WHERE fiscal_year_id=$1 AND ordinal=1",[baseYearId]);
     await fixture.query("ALTER TABLE fiscal_periods ENABLE TRIGGER fiscal_period_immutable"); await fixture.query("COMMIT");
-    expect(await scope(client=>allocateDocumentNumber(client,org,entity,input))).toEqual(receipt);
-    await expect(scope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID()}))).rejects.toThrow(/open fiscal period/);
+    expect(await numberScope(client=>allocateDocumentNumber(client,org,entity,input))).toEqual(receipt);
+    await expect(numberScope(client=>allocateDocumentNumber(client,org,entity,{...input,sourceId:randomUUID()}))).rejects.toThrow(/open fiscal period/);
     await expect(admin.query("UPDATE document_numbers SET number='REWRITTEN' WHERE id=$1",[receipt.id])).rejects.toMatchObject({code:"P0001"});
   } finally {
     await fixture.query("ROLLBACK"); await fixture.query("BEGIN"); await fixture.query("ALTER TABLE fiscal_periods DISABLE TRIGGER fiscal_period_immutable");

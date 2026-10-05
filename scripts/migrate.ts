@@ -43,11 +43,17 @@ try {
   await client.query("GRANT SELECT ON account_versions TO kaamledger_app");
   await client.query("GRANT SELECT ON journal_entries,journal_lines TO kaamledger_app");
   await client.query("REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON journal_entries,journal_lines FROM kaamledger_app");
-  // Approval/source persistence is not integrated: runtime posting stays denied.
+  // Never grant the raw writer; only the persisted approved-source adapter writes.
   await client.query("REVOKE ALL ON FUNCTION app_security.write_manual_journal(uuid,uuid,uuid,jsonb,text) FROM kaamledger_app");
+  await client.query("GRANT SELECT ON journal_posting_sources,journal_posting_decisions,journal_source_postings,journal_posting_events TO kaamledger_app");
+  await client.query("REVOKE ALL ON journal_posting_results FROM kaamledger_app");
+  await client.query("REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON journal_posting_sources,journal_posting_decisions,journal_source_postings,journal_posting_events FROM kaamledger_app");
+  await client.query("REVOKE ALL ON FUNCTION app_security.prepare_journal_posting_source(uuid,uuid,uuid,integer,jsonb,text,text) FROM kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.approve_journal_posting_source(uuid,uuid,uuid,integer,text,text),app_security.post_authorized_journal(uuid,uuid,uuid,integer,text,text) TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT ON fiscal_years,fiscal_periods,account_mapping_revisions,account_mapping_entries TO kaamledger_app");
   await client.query("GRANT SELECT ON account_purposes,document_series,document_numbers TO kaamledger_app");
-  await client.query("GRANT EXECUTE ON FUNCTION app_security.finance_setup_scope(uuid,uuid),app_security.allocate_document_number(uuid,uuid,text,uuid,text,date) TO kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.finance_setup_scope(uuid,uuid) TO kaamledger_app");
+  await client.query("REVOKE ALL ON FUNCTION app_security.allocate_document_number(uuid,uuid,text,uuid,text,date) FROM kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.can_read_accounts(uuid),app_security.can_manage_accounts(uuid) TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT,UPDATE ON outbox_events TO kaamledger_app");
   await client.query("GRANT SELECT,UPDATE ON alerts TO kaamledger_app");

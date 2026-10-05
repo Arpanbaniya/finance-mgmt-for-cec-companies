@@ -98,6 +98,8 @@ export async function patchAccountMappings(user: string, org: string, entity: st
 }
 // Called within a posting transaction; never commits a separate number reservation.
 export async function allocateDocumentNumber(client: PoolClient, org: string, entity: string, input: z.infer<typeof NumberRequest>) {
+  // Owner-only primitive after K013. Runtime numbering goes through an
+  // approved source posting function, never a standalone reservation.
   const command = NumberRequest.parse(input);
   const row = (await client.query("SELECT * FROM app_security.allocate_document_number($1,$2,$3,$4,$5,$6)", [org, entity, command.documentType, command.sourceId, command.eventKind, command.postingDate])).rows[0];
   return { id: row.id as string, number: row.number as string, sequenceNumber: row.sequence_number as string, fiscalYearId: row.fiscal_year_id as string };

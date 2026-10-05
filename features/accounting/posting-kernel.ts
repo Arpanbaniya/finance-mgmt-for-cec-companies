@@ -6,8 +6,8 @@ export type PostedJournalReceipt = { id: string; number: string; debit: string; 
 
 /**
  * Internal transaction primitive, NOT an approved-document adapter.
- * Runtime EXECUTE is deliberately withheld until persisted maker/checker
- * decisions and source transitions are integrated. No HTTP route calls this.
+ * Runtime EXECUTE is always withheld. The approved-source adapter calls the
+ * SQL primitive after persisted decision/source checks. No HTTP route calls this.
  * The caller owns BEGIN/COMMIT so subsequent source failures roll back numbering.
  */
 export async function writeManualJournal(client: PoolClient, organizationId: string, entityId: string, sourceId: string, value: unknown, requestId: string): Promise<PostedJournalReceipt> {
