@@ -46,6 +46,9 @@ try {
   await client.query("REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON manual_journal_drafts,manual_journal_revisions FROM kaamledger_app");
   await client.query("REVOKE ALL ON manual_journal_results FROM kaamledger_app");
   await client.query("REVOKE ALL ON manual_journal_execution_permits FROM kaamledger_app");
+  await client.query("REVOKE ALL ON manual_journal_reversal_requests,manual_journal_reversals,journal_reversal_holds FROM kaamledger_app");
+  await client.query("GRANT SELECT ON manual_journal_reversal_requests,manual_journal_reversals TO kaamledger_app");
+  await client.query("GRANT EXECUTE ON FUNCTION app_security.request_manual_journal_reversal(uuid,uuid,uuid,integer,date,text,text,text) TO kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.transition_manual_journal(uuid,uuid,uuid,integer,text,text,text,text,text),app_security.manual_journal_review(uuid,uuid,uuid) TO kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.save_manual_journal_draft(uuid,uuid,uuid,integer,jsonb,text,text),app_security.cancel_manual_journal_draft(uuid,uuid,uuid,integer,text,text,text) TO kaamledger_app");
   await client.query("REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON journal_entries,journal_lines FROM kaamledger_app");

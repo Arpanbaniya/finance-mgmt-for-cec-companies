@@ -3,8 +3,13 @@ import { expect, it } from "vitest";
 import { JournalCreate, JournalPatch } from "@/domain/manual-journal";
 import { openapi } from "@/features/platform/openapi";
 import { body } from "@/features/platform/http";
+import { DateAction } from "@/features/accounting/journal-contracts";
 const lines = [{ accountId: randomUUID(), debit: "10", credit: "0", dimensions: {} }, { accountId: randomUUID(), debit: "0", credit: "10", dimensions: {} }];
 const valid = { postingDate: "2026-10-10", documentDate: "2026-10-09", description: " Reviewed adjustment ", lines };
+it("dated reversal requires a strict real date and reason, without financial overrides", () => {
+  expect(DateAction.parse({ postingDate: "2026-11-10", reason: " Corrected adjustment " })).toEqual({ postingDate: "2026-11-10", reason: "Corrected adjustment" });
+  for (const input of [{ postingDate: "2026-02-29", reason: "Reason" }, { postingDate: "2026-11-10", reason: "  " }, { postingDate: "2026-11-10", reason: "Reason", lines }, { postingDate: "2026-11-10", reason: "Reason", status: "posted" }]) expect(DateAction.safeParse(input).success).toBe(false);
+});
 it("manual drafts normalize money but never accept source, actor, status or account versions", () => {
   expect(JournalCreate.parse(valid)).toMatchObject({ description: "Reviewed adjustment", lines: [{ debit: "10.00" }, { credit: "10.00" }] });
   for (const field of ["organizationId", "sourceId", "sourceType", "status", "journalId", "createdBy", "version", "currency", "approved"]) expect(JournalCreate.safeParse({ ...valid, [field]: "injected" }).success).toBe(false);
@@ -18,13 +23,13 @@ it("draft patches are finite nonempty subsets and replace balanced lines as a wh
   expect(JournalPatch.safeParse({ description: "Changed explanation" }).success).toBe(true);
   for (const value of [{}, { description: null }, { status: "posted" }, { lines: [lines[0]] }, { amount: "20.00" }]) expect(JournalPatch.safeParse(value).success).toBe(false);
 });
-it("exposes nine journal operations, with ETag, creation Location and no premature reversal", () => {
+it("exposes ten journal operations, including controlled dated reversal", () => {
   const doc = openapi(), base = "/api/v1/orgs/{orgId}/entities/{entityId}/journals";
   for (const name of ["Journal", "JournalList", "JournalCreate", "JournalPatch"]) expect(doc.components.schemas[name]).toBeDefined();
   expect(doc.paths[base].post).toMatchObject({ responses: { "201": { headers: { ETag: expect.anything(), Location: expect.anything() } } } });
   expect(doc.paths[`${base}/{id}/cancel`].post).toMatchObject({ parameters: expect.arrayContaining([expect.objectContaining({ name: "If-Match", required: true }), expect.objectContaining({ name: "Idempotency-Key", required: true })]), responses: { "200": expect.anything() } });
-  for (const action of ["submit", "approve", "reject", "post"]) expect(doc.paths[`${base}/{id}/${action}`].post).toMatchObject({ parameters: expect.arrayContaining([expect.objectContaining({ name: "If-Match", required: true }), expect.objectContaining({ name: "Idempotency-Key", required: true })]), responses: { "200": expect.anything() } });
-  expect(doc.paths[`${base}/{id}/reverse`]).toBeUndefined();
+  for (const action of ["submit", "approve", "reject", "post", "reverse"]) expect(doc.paths[`${base}/{id}/${action}`].post).toMatchObject({ parameters: expect.arrayContaining([expect.objectContaining({ name: "If-Match", required: true }), expect.objectContaining({ name: "Idempotency-Key", required: true })]), responses: { "200": expect.anything() } });
+  expect(doc.paths[`${base}/{id}/reverse`].post).toMatchObject({ requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/DateAction" } } } } });
 });
 it("the journal request budget permits the declared 500 lines but remains bounded", async () => {
   const command = { ...valid, lines: Array.from({ length: 500 }, (_, i) => ({ ...lines[i % 2], dimensions: { branchId: randomUUID() } })) };

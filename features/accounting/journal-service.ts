@@ -4,7 +4,7 @@ import { DomainError } from "@/domain/errors";
 import { prepareManualPosting } from "@/domain/posting";
 import { withScope } from "@/features/identity/scope";
 import { Reason } from "@/features/alerts/contracts";
-import { JournalCreate, JournalPatch, JournalDTO, JournalCancelResult, JournalCommandResult, JournalNoBody } from "./journal-contracts";
+import { JournalCreate, JournalPatch, JournalDTO, JournalCancelResult, JournalCommandResult, JournalNoBody, DateAction } from "./journal-contracts";
 import { canonicalJSON, type JsonValue } from "@/domain/approvals";
 import { Transition } from "@/features/approvals/contracts";
 
@@ -13,10 +13,11 @@ function dto(row: Record<string, unknown>) {
   const { totals } = prepareManualPosting(row.body);
   const review = row.review as { approvals: { createdAt: string }[] } | null | undefined;
   return JournalDTO.parse({ ...(row.body as object), id: row.id, organizationId: row.organization_id, entityId: row.legal_entity_id,
-    sourceType: "journal", sourceId: row.id, eventKind: "manual", status: row.status, version: row.version,
+    sourceType: "journal", sourceId: row.id, eventKind: row.reversal_of ? "reverse" : "manual", status: row.reversal_journal_id ? "reversed" : row.status, version: row.version,
     debit: totals.debit, credit: totals.credit, createdBy: row.created_by, updatedBy: row.updated_by,
     createdAt: instant(row.created_at), updatedAt: instant(row.updated_at), cancelReason: row.cancel_reason,
     journalId: row.journal_id ?? null, number: row.number ?? null, transitionReason: row.transition_reason ?? null,
+    reversalOf: row.reversal_of ?? null, reversalOfSourceId: row.reversal_of_source_id ?? null, reversalRequestId: row.reversal_request_id ?? null, reversalJournalId: row.reversal_journal_id ?? null,
     review: review ? { ...review, approvals: review.approvals.map(approval => ({ ...approval, createdAt: instant(approval.createdAt) })) } : null });
 }
 async function selected(client: PoolClient, org: string, entity: string, id: string) {
@@ -39,21 +40,35 @@ async function sqlCommand<T>(run: () => Promise<T>): Promise<T> {
         APPROVAL_INVALIDATED: ["Accounts, scope or policy changed. Edit and resubmit this journal.", 409],
         APPROVAL_POLICY_REQUIRED: ["An active applicable journal approval policy is required.", 422], PERIOD_CLOSED: ["Posting requires an open fiscal period.", 422],
         RULE_NOT_VERIFIED: ["Only a fictional demo policy is available for manual posting.", 422],
+        REVERSAL_SOURCE_UNSUPPORTED: ["Use the controlled workflow of the original source. Only ordinary manual postings can be reversed here.", 422],
+        REVERSAL_DEPENDENCY: ["A dependent financial or close record blocks reversal.", 409], ALREADY_REVERSED: ["The original journal already has a posted reversal.", 409],
+        REVERSAL_PENDING: ["Open or cancel the existing reversal draft before requesting another.", 409],
+        REVERSAL_CONTENT_LOCKED: ["Reversal dates and exact inverse lines cannot be changed. Cancel and request a new dated reversal instead.", 422],
+        REVERSAL_DATE: ["Reversal cannot precede the original posting date.", 422],
       };
       if (errors[code]) throw new DomainError(code, ...errors[code]);
     }
     throw error;
   }
 }
+const journalProjection = `SELECT d.*,j.number,r.original_journal_id AS reversal_of,r.original_draft_id AS reversal_of_source_id,
+  pending.draft_id AS reversal_request_id,completed.reversal_journal_id
+  FROM manual_journal_drafts d
+  LEFT JOIN journal_entries j ON j.organization_id=d.organization_id AND j.legal_entity_id=d.legal_entity_id AND j.id=d.journal_id
+  LEFT JOIN manual_journal_reversal_requests r ON r.organization_id=d.organization_id AND r.legal_entity_id=d.legal_entity_id AND r.draft_id=d.id
+  LEFT JOIN manual_journal_reversals completed ON completed.organization_id=d.organization_id AND completed.legal_entity_id=d.legal_entity_id AND completed.original_journal_id=d.journal_id
+  LEFT JOIN LATERAL (SELECT rr.draft_id FROM manual_journal_reversal_requests rr JOIN manual_journal_drafts child ON child.id=rr.draft_id
+    WHERE rr.organization_id=d.organization_id AND rr.legal_entity_id=d.legal_entity_id AND rr.original_draft_id=d.id AND child.status<>'cancelled'
+    ORDER BY rr.created_at DESC,rr.draft_id DESC LIMIT 1) pending ON true`;
 export async function listJournals(user: string, org: string, entity: string, limit: number, cursor?: string) {
   return withScope(user, org, entity, "journals.read", async client => {
-    const rows = await client.query("SELECT * FROM manual_journal_drafts WHERE organization_id=$1 AND legal_entity_id=$2 AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4", [org, entity, cursor ?? null, limit + 1]);
+    const rows = await client.query(`${journalProjection} WHERE d.organization_id=$1 AND d.legal_entity_id=$2 AND ($3::uuid IS NULL OR d.id>$3) ORDER BY d.id LIMIT $4`, [org, entity, cursor ?? null, limit + 1]);
     const data = rows.rows.slice(0, limit).map(dto); return { data, nextCursor: rows.rows.length > limit ? data.at(-1)!.id : null };
   });
 }
 export async function getJournal(user: string, org: string, entity: string, id: string) {
   return withScope(user, org, entity, "journals.read", async client => sqlCommand(async () => {
-    const rows = await client.query("SELECT d.*,app_security.manual_journal_review($1,$2,d.id) AS review,j.number FROM manual_journal_drafts d LEFT JOIN journal_entries j ON j.organization_id=d.organization_id AND j.legal_entity_id=d.legal_entity_id AND j.id=d.journal_id WHERE d.organization_id=$1 AND d.legal_entity_id=$2 AND d.id=$3", [org, entity, id]);
+    const rows = await client.query(`${journalProjection.replace("SELECT d.*,", "SELECT d.*,app_security.manual_journal_review($1,$2,d.id) AS review,")} WHERE d.organization_id=$1 AND d.legal_entity_id=$2 AND d.id=$3`, [org, entity, id]);
     if (!rows.rowCount) throw new DomainError("NOT_FOUND", "Journal is unavailable.", 404);
     return dto(rows.rows[0]);
   }));
@@ -85,7 +100,7 @@ export async function cancelJournal(user: string, org: string, entity: string, i
   }));
 }
 
-type JournalAction = "submit" | "approve" | "reject" | "post";
+type JournalAction = "submit" | "approve" | "reject" | "post" | "reverse";
 export function availableJournalActions(journal: z.infer<typeof JournalDTO>, user: string, permissions: Set<string>): JournalAction[] {
   const actions: JournalAction[] = [];
   if (journal.status === "draft" && journal.createdBy === user && permissions.has("journals.submit")) actions.push("submit");
@@ -94,9 +109,10 @@ export function availableJournalActions(journal: z.infer<typeof JournalDTO>, use
     actions.push("reject");
   }
   if (journal.status === "approved" && journal.review?.snapshotValid && journal.review.validApprovals >= journal.review.requiredApprovals && permissions.has("journals.post")) actions.push("post");
+  if (journal.status === "posted" && !journal.reversalOf && !journal.reversalRequestId && permissions.has("journals.reverse")) actions.push("reverse");
   return actions;
 }
-async function transitionJournal(user: string, org: string, entity: string, id: string, action: JournalAction, reason: string | undefined, version: number, key: string, requestId: string) {
+async function transitionJournal(user: string, org: string, entity: string, id: string, action: Exclude<JournalAction, "reverse">, reason: string | undefined, version: number, key: string, requestId: string) {
   const permission = action === "reject" ? "journals.approve" : `journals.${action}`;
   return withScope(user, org, entity, permission, client => sqlCommand(async () => {
     let canonical: string | null = null;
@@ -120,4 +136,11 @@ export async function rejectJournal(user: string, org: string, entity: string, i
 export async function postJournal(user: string, org: string, entity: string, id: string, input: z.infer<typeof JournalNoBody>, version: number, key: string, requestId: string) {
   JournalNoBody.parse(input);
   return transitionJournal(user, org, entity, id, "post", undefined, version, key, requestId);
+}
+export async function reverseJournal(user: string, org: string, entity: string, id: string, input: z.infer<typeof DateAction>, version: number, key: string, requestId: string) {
+  const command = DateAction.parse(input);
+  return withScope(user, org, entity, "journals.reverse", client => sqlCommand(async () => {
+    const rows = await client.query("SELECT app_security.request_manual_journal_reversal($1,$2,$3,$4,$5,$6,$7,$8) AS result", [org, entity, id, version, command.postingDate, command.reason, key, requestId]);
+    return JournalCommandResult.parse(rows.rows[0].result);
+  }));
 }

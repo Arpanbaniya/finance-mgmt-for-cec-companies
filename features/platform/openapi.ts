@@ -6,13 +6,13 @@ import { AlertDTO, AlertCommandResult, Reason } from "@/features/alerts/contract
 import { JobDTO, JobResult } from "@/features/jobs/contracts";
 import { AccountDTO, AccountCreate, AccountPatch } from "@/features/accounting/contracts";
 import { FiscalYearDTO, PeriodDTO, PeriodCreate, AccountMappingsDTO, AccountMappingsPatch } from "@/features/accounting/setup-contracts";
-import { JournalCreate, JournalPatch, JournalDTO, JournalCancelResult, JournalCommandResult } from "@/features/accounting/journal-contracts";
+import { JournalCreate, JournalPatch, JournalDTO, JournalCancelResult, JournalCommandResult, DateAction } from "@/features/accounting/journal-contracts";
 
 const SessionContext = z.strictObject({ user: z.strictObject({ id: z.string(), name: z.string(), email: z.email() }), memberships: z.array(MembershipDTO) });
 const meta = z.strictObject({ requestId: z.string(), version: z.number().int().optional(), nextCursor: z.uuid().nullable().optional() });
 const error = z.strictObject({ error: z.strictObject({ code: z.string(), message: z.string(), requestId: z.string(), retryable: z.boolean(), fieldErrors: z.array(z.strictObject({ path: z.string(), message: z.string() })) }) });
 const responses = { Health: HealthDTO, SessionContext, Entity: EntityDTO, EntityList: z.array(EntityDTO), Membership: MembershipDTO, MembershipList: z.array(MembershipDTO), ApprovalPolicy: ApprovalPolicyDTO, ApprovalPolicyList: z.array(ApprovalPolicyDTO), AuditEventList: z.array(AuditEventDTO), AlertList: z.array(AlertDTO), Job: JobDTO, JobResult, Account: AccountDTO, AccountList: z.array(AccountDTO), Journal: JournalDTO, JournalList: z.array(JournalDTO), FiscalYear: FiscalYearDTO, FiscalYearList: z.array(FiscalYearDTO), Period: PeriodDTO, PeriodList: z.array(PeriodDTO), AccountMappings: AccountMappingsDTO, CommandResult: z.discriminatedUnion("status", [CommandResult, AlertCommandResult, JournalCancelResult, JournalCommandResult]) };
-const requests = { EntityCreate, EntityPatch, MembershipChange, ListQuery, ApprovalPolicyCreate, AuditQuery, Transition, Reason, AccountCreate, AccountPatch, JournalCreate, JournalPatch, PeriodCreate, AccountMappingsPatch, NoBody: z.strictObject({}) };
+const requests = { EntityCreate, EntityPatch, MembershipChange, ListQuery, ApprovalPolicyCreate, AuditQuery, Transition, Reason, DateAction, AccountCreate, AccountPatch, JournalCreate, JournalPatch, PeriodCreate, AccountMappingsPatch, NoBody: z.strictObject({}) };
 export function openapi() {
   const schemas: Record<string, unknown> = { Error: z.toJSONSchema(error, { unrepresentable: "any" }) };
   for (const [name, schema] of Object.entries(requests)) schemas[name] = z.toJSONSchema(schema, { unrepresentable: "any" });

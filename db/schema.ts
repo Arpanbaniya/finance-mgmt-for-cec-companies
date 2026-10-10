@@ -197,3 +197,21 @@ export const journalPostingEvents = pgTable("journal_posting_events", {
 }, t => [unique().on(t.organizationId, t.legalEntityId, t.kind, t.sourceId),
   foreignKey({ columns: [t.organizationId, t.legalEntityId, t.journalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] }),
   foreignKey({ columns: [t.organizationId, t.legalEntityId, t.sourceId, t.sourceVersion], foreignColumns: [journalPostingSources.organizationId, journalPostingSources.legalEntityId, journalPostingSources.sourceId, journalPostingSources.sourceVersion] })]);
+export const manualJournalReversalRequests = pgTable("manual_journal_reversal_requests", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), draftId: uuid("draft_id").primaryKey(),
+  originalDraftId: uuid("original_draft_id").notNull(), originalJournalId: uuid("original_journal_id").notNull(), postingDate: date("posting_date").notNull(), reason: text("reason").notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.draftId),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.draftId], foreignColumns: [manualJournalDrafts.organizationId, manualJournalDrafts.legalEntityId, manualJournalDrafts.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.originalDraftId], foreignColumns: [manualJournalDrafts.organizationId, manualJournalDrafts.legalEntityId, manualJournalDrafts.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.originalJournalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] })]);
+export const manualJournalReversals = pgTable("manual_journal_reversals", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), originalJournalId: uuid("original_journal_id").primaryKey(),
+  reversalDraftId: uuid("reversal_draft_id").notNull().unique(), reversalJournalId: uuid("reversal_journal_id").notNull().unique(),
+  createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [foreignKey({ columns: [t.organizationId, t.legalEntityId, t.originalJournalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.reversalDraftId], foreignColumns: [manualJournalReversalRequests.organizationId, manualJournalReversalRequests.legalEntityId, manualJournalReversalRequests.draftId] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.reversalJournalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] })]);
+export const journalReversalHolds = pgTable("journal_reversal_holds", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), journalId: uuid("journal_id").notNull(), dependencyType: text("dependency_type").notNull(), dependencyId: uuid("dependency_id").notNull(), reason: text("reason").notNull(),
+}, t => [primaryKey({ columns: [t.organizationId, t.legalEntityId, t.journalId, t.dependencyType, t.dependencyId] }), foreignKey({ columns: [t.organizationId, t.legalEntityId, t.journalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] })]);
