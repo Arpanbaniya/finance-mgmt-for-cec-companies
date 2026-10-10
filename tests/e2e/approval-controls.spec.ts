@@ -88,7 +88,8 @@ test("maker saves exact ranges; independent reviewer activates, resolves stale s
         expect(await deferPolicyEvent(reviewer, org, entity.id, lease)).toBe(true);
         if (attempt < 2) {
           const client = await clock.connect();
-          try { await client.query("BEGIN"); await client.query("ALTER TABLE outbox_events DISABLE TRIGGER outbox_guard"); await client.query("UPDATE outbox_events SET available_at=clock_timestamp()-interval '1 second' WHERE id=$1 AND organization_id=$2", [eventId, org]); await client.query("ALTER TABLE outbox_events ENABLE TRIGGER outbox_guard"); await client.query("COMMIT"); }
+          // Keep the targeted local fixture ahead of the other pending event in the FIFO queue.
+          try { await client.query("BEGIN"); await client.query("ALTER TABLE outbox_events DISABLE TRIGGER outbox_guard"); await client.query("UPDATE outbox_events SET available_at=clock_timestamp()-interval '1 day' WHERE id=$1 AND organization_id=$2", [eventId, org]); await client.query("ALTER TABLE outbox_events ENABLE TRIGGER outbox_guard"); await client.query("COMMIT"); }
           catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
         }
       } } finally { await clock.end(); }

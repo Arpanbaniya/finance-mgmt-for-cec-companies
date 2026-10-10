@@ -28,7 +28,7 @@ export function JournalForm({ journal, accounts, url, screen }: { journal?: z.in
       key.current = null; router.replace(`${screen}&journal=${payload.data.id}`); router.refresh();
     } catch { setError("No save was confirmed. Keep these fields and retry when connected."); } finally { setPending(false); }
   }
-  return <Card><CardContent className="space-y-4 pt-6"><h2 className="text-xl font-medium">{journal ? "Edit journal draft" : "Create journal draft"}</h2><p className="text-sm text-muted-foreground">NPR only. Exactly one positive side per line; totals must balance. Saving does not post money.</p>
+  return <Card><CardContent className="space-y-4 pt-6"><h2 className="text-xl font-medium">{journal ? "Edit journal draft" : "Create journal draft"}</h2><p className="text-sm text-muted-foreground">NPR only. Exactly one positive side per line; totals must balance. Saving does not post money. Editing a submitted or approved journal returns it to draft and invalidates that submission.</p>
     <form aria-label={journal ? "Edit journal draft" : "Create journal draft"} onSubmit={save} onChange={() => { key.current = null; }} className="space-y-4">
       <fieldset disabled={pending || conflict} className="min-w-0 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor={`${prefix}-posting`}>Posting date</Label><Input id={`${prefix}-posting`} name="postingDate" type="date" defaultValue={journal?.postingDate} required /></div><div className="space-y-2"><Label htmlFor={`${prefix}-document`}>Document date</Label><Input id={`${prefix}-document`} name="documentDate" type="date" defaultValue={journal?.documentDate} required /></div></div>

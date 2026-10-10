@@ -18,12 +18,13 @@ it("draft patches are finite nonempty subsets and replace balanced lines as a wh
   expect(JournalPatch.safeParse({ description: "Changed explanation" }).success).toBe(true);
   for (const value of [{}, { description: null }, { status: "posted" }, { lines: [lines[0]] }, { amount: "20.00" }]) expect(JournalPatch.safeParse(value).success).toBe(false);
 });
-it("exposes only five draft catalog operations, with ETag and creation Location", () => {
+it("exposes nine journal operations, with ETag, creation Location and no premature reversal", () => {
   const doc = openapi(), base = "/api/v1/orgs/{orgId}/entities/{entityId}/journals";
   for (const name of ["Journal", "JournalList", "JournalCreate", "JournalPatch"]) expect(doc.components.schemas[name]).toBeDefined();
   expect(doc.paths[base].post).toMatchObject({ responses: { "201": { headers: { ETag: expect.anything(), Location: expect.anything() } } } });
   expect(doc.paths[`${base}/{id}/cancel`].post).toMatchObject({ parameters: expect.arrayContaining([expect.objectContaining({ name: "If-Match", required: true }), expect.objectContaining({ name: "Idempotency-Key", required: true })]), responses: { "200": expect.anything() } });
-  for (const action of ["submit", "approve", "post", "reverse"]) expect(doc.paths[`${base}/{id}/${action}`]).toBeUndefined();
+  for (const action of ["submit", "approve", "reject", "post"]) expect(doc.paths[`${base}/{id}/${action}`].post).toMatchObject({ parameters: expect.arrayContaining([expect.objectContaining({ name: "If-Match", required: true }), expect.objectContaining({ name: "Idempotency-Key", required: true })]), responses: { "200": expect.anything() } });
+  expect(doc.paths[`${base}/{id}/reverse`]).toBeUndefined();
 });
 it("the journal request budget permits the declared 500 lines but remains bounded", async () => {
   const command = { ...valid, lines: Array.from({ length: 500 }, (_, i) => ({ ...lines[i % 2], dimensions: { branchId: randomUUID() } })) };

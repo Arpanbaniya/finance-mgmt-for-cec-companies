@@ -147,7 +147,10 @@ export const manualJournalDrafts = pgTable("manual_journal_drafts", {
   body: jsonb("body").notNull(), amount: numeric("amount", { precision: 20, scale: 2 }).notNull(), status: text("status").notNull().default("draft"), version: integer("version").notNull().default(1),
   createdBy: text("created_by").notNull().references(() => user.id), updatedBy: text("updated_by").notNull().references(() => user.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(), cancelReason: text("cancel_reason"),
-}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
+  currentCommandId: uuid("current_command_id"), submissionCount: integer("submission_count").notNull().default(0), journalId: uuid("journal_id"), transitionReason: text("transition_reason"),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.currentCommandId], foreignColumns: [journalPostingSources.organizationId, journalPostingSources.legalEntityId, journalPostingSources.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.journalId], foreignColumns: [journalEntries.organizationId, journalEntries.legalEntityId, journalEntries.id] })]);
 export const manualJournalRevisions = pgTable("manual_journal_revisions", {
   organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), draftId: uuid("draft_id").notNull(), version: integer("version").notNull(),
   snapshot: jsonb("snapshot").notNull(), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
@@ -167,6 +170,12 @@ export const journalPostingSources = pgTable("journal_posting_sources", {
   foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] }),
   foreignKey({ columns: [t.organizationId, t.legalEntityId, t.policyId], foreignColumns: [approvalPolicies.organizationId, approvalPolicies.legalEntityId, approvalPolicies.id] }),
   foreignKey({ columns: [t.organizationId, t.legalEntityId, t.mappingRevisionId], foreignColumns: [accountMappingRevisions.organizationId, accountMappingRevisions.legalEntityId, accountMappingRevisions.id] })]);
+export const manualJournalExecutionPermits = pgTable("manual_journal_execution_permits", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), draftId: uuid("draft_id").notNull(), commandId: uuid("command_id").notNull(),
+  principalId: text("principal_id").notNull(), action: text("action").notNull(), transactionId: transactionId("transaction_id").notNull(),
+}, t => [primaryKey({ columns: [t.organizationId, t.legalEntityId, t.draftId, t.action, t.transactionId] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.draftId], foreignColumns: [manualJournalDrafts.organizationId, manualJournalDrafts.legalEntityId, manualJournalDrafts.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.commandId], foreignColumns: [journalPostingSources.organizationId, journalPostingSources.legalEntityId, journalPostingSources.id] })]);
 export const journalPostingDecisions = pgTable("journal_posting_decisions", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), commandId: uuid("command_id").notNull(),
   actorId: text("actor_id").notNull().references(() => user.id), contentHash: text("content_hash").notNull(), reason: text("reason").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
