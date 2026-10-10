@@ -23,10 +23,10 @@ export function idempotencyKey(request: Request): string {
   if (!key || !/^[\w.-]{8,200}$/.test(key)) throw new DomainError("IDEMPOTENCY_REQUIRED", "Send a stable Idempotency-Key of 8–200 characters.", 400);
   return key;
 }
-export async function body(request: Request): Promise<unknown> {
+export async function body(request: Request, maximumCharacters = 64000): Promise<unknown> {
   if (!request.headers.get("content-type")?.includes("application/json")) throw new DomainError("INVALID_CONTENT_TYPE", "Use application/json.", 400);
   const content = await request.text();
-  if (content.length > 64000) throw new DomainError("BODY_TOO_LARGE", "Request is too large.", 413);
+  if (content.length > maximumCharacters) throw new DomainError("BODY_TOO_LARGE", "Request is too large.", 413);
   try { return JSON.parse(content); } catch { throw new DomainError("INVALID_JSON", "Request JSON is malformed.", 400); }
 }
 export async function api(request: Request, run: (requestId: string) => Promise<Response>): Promise<Response> {

@@ -46,6 +46,14 @@ Open **Fiscal calendars and mappings** on a company card to configure an explici
 
 Finance managers can save a complete set of account-purpose mappings with an effective date and reason. Choices are restricted to compatible active account classifications; compatible purposes may share an account. After initial configuration, dates must follow the latest mapping and cannot precede today in Nepal. A future version does not replace today's effective version. Previous mappings and account versions remain preserved. Accounts required by fiscal calendars or current/future mappings cannot be archived. Accountants and auditors may browse setup but cannot change it. Reload current mappings after a version conflict. Mapping tax accounts does not activate statutory rules.
 
+### Manual journal drafts
+
+Open **Manual journal drafts** on a company card to prepare balanced NPR adjustments. Accountants and finance managers can save and edit drafts; auditors have read-only access. Supply posting/document dates, a description and two to five hundred lines. Each line has one positive debit or credit, and totals must match exactly. The server selects current account versions. Control accounts are reserved for their dedicated financial workflows, not ordinary manual journals.
+
+Saved edits retain previous revisions. If another person edits first, reload the current draft before saving again. To cancel an unused draft, enter a reason and confirm; cancellation preserves its history. Draft creation and cancellation retries reuse their original command results. Drafts do not allocate a number, prepare an approved source, or affect the ledger. Submission, approval, posting and reversal are not available on this screen yet.
+
+The account picker contains eligible accounts from the first hundred chart entries. Branch dimensions supplied through the API must belong to the same company; existing branches are retained when editing. Other dimension types remain unavailable until their scoped masters are implemented.
+
 ### Notification delivery
 
 Activation commits a durable event alongside the policy change. An operator runs an explicit scoped batch with restricted runtime credentials:
