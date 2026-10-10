@@ -45,9 +45,15 @@ it("activation needs a different designated admin/finance reviewer", async () =>
   for (const actor of [finance, reviewer]) await expect(activatePolicy(actor, org, entity, draft.id, {}, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ status: 403 });
   expect((await getPolicy(maker, org, entity, draft.id)).status).toBe("draft");
   expect((await admin.query("SELECT * FROM audit_events WHERE target_id=$1", [draft.id])).rowCount).toBe(1);
-  const key = randomUUID(), requestId = randomUUID();
-  const [a, b] = await Promise.all([activatePolicy(checker, org, entity, draft.id, {}, 1, key, requestId), activatePolicy(checker, org, entity, draft.id, {}, 1, key, randomUUID())]);
-  expect(a).toEqual(b); expect(a.requestId).toBe(requestId); expect(a.version).toBe(2);
+  const key = randomUUID(), requestId = randomUUID(), competingRequestId = randomUUID();
+  const [a, b] = await Promise.all([activatePolicy(checker, org, entity, draft.id, {}, 1, key, requestId), activatePolicy(checker, org, entity, draft.id, {}, 1, key, competingRequestId)]);
+  // Promise array order does not determine which transaction acquires the lock.
+  expect(a).toEqual(b); expect([requestId, competingRequestId]).toContain(a.requestId); expect(a.version).toBe(2);
+  const activationAudit = await admin.query("SELECT request_id FROM audit_events WHERE target_id=$1 AND action='approval_policy.activate'", [draft.id]);
+  expect(activationAudit.rows).toEqual([{ request_id: a.requestId }]);
+  const receipts = await admin.query("SELECT response FROM idempotency_results WHERE organization_id=$1 AND principal_id=$2 AND operation=$3 AND key=$4", [org, checker, `approval_policy.activate:${entity}`, key]);
+  expect(receipts.rows).toEqual([{ response: a }]);
+  expect(await activatePolicy(checker, org, entity, draft.id, {}, 1, key, randomUUID())).toEqual(a);
   await expect(activatePolicy(checker, org, entity, draft.id, {}, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ status: 412 });
   await expect(activatePolicy(checker, org, entity, draft.id, { reason: "Different request" }, 1, key, randomUUID())).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   expect((await admin.query("SELECT * FROM audit_events WHERE target_id=$1", [draft.id])).rowCount).toBe(2);
