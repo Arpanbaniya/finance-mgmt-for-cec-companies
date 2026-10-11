@@ -10,6 +10,17 @@ export const OpenBalance = z.strictObject({
   postingDate: z.iso.date(), dueDate: z.iso.date(), originalAmount: DecimalText, allocatedAmount: DecimalText, outstandingAmount: DecimalText,
 });
 export const BalanceQuery = SubledgerCutoff.extend({ limit: z.number().int().min(1).max(100).default(25), after: z.uuid().optional() });
+// Kept as one query so diagnostics exercise the same bounded scoped reader.
+export const OpenBalancesSQL = `WITH page AS (
+  SELECT * FROM subledger_open_items WHERE organization_id=$1 AND legal_entity_id=$2
+  AND posting_date<=$3::date AND recorded_at<=$4::timestamptz AND ($5::uuid IS NULL OR id>$5) ORDER BY id LIMIT $6
+), applied AS (
+  SELECT a.open_item_id,sum(CASE WHEN a.reversal_of IS NULL THEN a.amount ELSE -a.amount END) AS amount
+  FROM subledger_allocations a JOIN page p ON p.id=a.open_item_id
+  WHERE a.organization_id=$1 AND a.legal_entity_id=$2 AND a.effective_date<=$3::date AND a.recorded_at<=$4::timestamptz GROUP BY a.open_item_id
+) SELECT p.id,p.party_id AS "partyId",p.side,p.source_id AS "sourceId",p.journal_id AS "journalId",p.posting_date::text AS "postingDate",p.due_date::text AS "dueDate",
+  p.amount::text AS "originalAmount",coalesce(a.amount,0.00)::numeric(20,2)::text AS "allocatedAmount",(p.amount-coalesce(a.amount,0.00))::numeric(20,2)::text AS "outstandingAmount"
+  FROM page p LEFT JOIN applied a ON a.open_item_id=p.id ORDER BY p.id`;
 
 /** No runtime EXECUTE grant; only trusted source adapters may use this seam. */
 export async function writeSubledgerSource(client: PoolClient, org: string, entity: string, source: string, input: unknown, requestId: string) {
@@ -25,16 +36,7 @@ export async function readOpenBalances(user: string, org: string, entity: string
   const query = BalanceQuery.parse(value);
   return withScope(user, org, entity, "journals.read", async client => {
     const result = await client.query(
-      `WITH page AS (
-        SELECT * FROM subledger_open_items WHERE organization_id=$1 AND legal_entity_id=$2
-        AND posting_date<=$3::date AND recorded_at<=$4::timestamptz AND ($5::uuid IS NULL OR id>$5) ORDER BY id LIMIT $6
-      ), applied AS (
-        SELECT a.open_item_id,sum(CASE WHEN a.reversal_of IS NULL THEN a.amount ELSE -a.amount END) AS amount
-        FROM subledger_allocations a JOIN page p ON p.id=a.open_item_id
-        WHERE a.organization_id=$1 AND a.legal_entity_id=$2 AND a.effective_date<=$3::date AND a.recorded_at<=$4::timestamptz GROUP BY a.open_item_id
-      ) SELECT p.id,p.party_id AS "partyId",p.side,p.source_id AS "sourceId",p.journal_id AS "journalId",p.posting_date::text AS "postingDate",p.due_date::text AS "dueDate",
-        p.amount::text AS "originalAmount",coalesce(a.amount,0.00)::numeric(20,2)::text AS "allocatedAmount",(p.amount-coalesce(a.amount,0.00))::numeric(20,2)::text AS "outstandingAmount"
-        FROM page p LEFT JOIN applied a ON a.open_item_id=p.id ORDER BY p.id`,
+      OpenBalancesSQL,
       [org, entity, query.asOfDate, query.knownAt, query.after ?? null, query.limit + 1],
     );
     const data = result.rows.slice(0, query.limit).map(row => OpenBalance.parse(row));

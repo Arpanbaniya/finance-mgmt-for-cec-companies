@@ -36,6 +36,10 @@ async function pair(side: "ar" | "ap" = "ar", amount = "3000.00", sourceAmount =
 }
 const apply = (settlement: string, target: string, amount = "3000.00", date = "2026-02-01"): SubledgerSourceValue => ({ kind: "application", settlementId: settlement, openItemId: target, amount, postingDate: date, documentDate: date });
 const balance = async (target: string, date = "2026-12-31", instant = knownAt) => (await readOpenBalances(reader, org, entity, { asOfDate: date, knownAt: instant, limit: 100 })).data.find(row => row.id === target)!;
+const requireClear = (journal: string, date = "2026-12-31") => internal(client => client.query("SELECT app_security.require_journal_dependencies_clear($1,$2,$3,$4)", [org, entity, journal, date]));
+const hold = (journal: string, dependency: string = randomUUID(), type = "close") => internal(client => client.query("INSERT INTO journal_reversal_holds VALUES($1,$2,$3,$4,$5,'Synthetic controlled dependency')", [org, entity, journal, type, dependency]));
+async function allocationId(source: string) { return (await admin.query("SELECT id FROM subledger_allocations WHERE source_id=$1", [source])).rows[0].id as string; }
+const inverse = (allocation: string, date = "2026-03-01"): SubledgerSourceValue => ({ kind: "allocation_reverse", reversalOf: allocation, postingDate: date, documentDate: date, reason: "Synthetic controlled inverse" });
 
 beforeAll(async () => {
   const url = new URL(process.env.MIGRATION_DATABASE_URL ?? "");
@@ -210,4 +214,79 @@ it("bounded keyset pages have exact string values and stable nonoverlapping curs
   const first = await readOpenBalances(reader, org, entity, { asOfDate: "2026-12-31", knownAt, limit: 2 }); expect(first.data).toHaveLength(2); expect(first.nextCursor).toBe(first.data[1].id);
   const second = await readOpenBalances(reader, org, entity, { asOfDate: "2026-12-31", knownAt, limit: 2, after: first.nextCursor! }); expect(second.data).toHaveLength(2); expect(second.data.some(row => first.data.some(previous => previous.id === row.id))).toBe(false);
   expect(first.data.every(row => typeof row.outstandingAmount === "string")).toBe(true);
+});
+it("dependency clearing recognizes only dated releases and keeps all original evidence", async () => {
+  const p = await pair(), one = randomUUID(), two = randomUUID();
+  const firstJournal = await post(apply(p.settlement, p.target, "1000.00"), one);
+  await post(apply(p.settlement, p.target, "1000.00"), two);
+  const targetJournal = (await admin.query("SELECT journal_id FROM subledger_open_items WHERE id=$1", [p.target])).rows[0].journal_id;
+  await expect(requireClear(targetJournal)).rejects.toMatchObject({ message: "REVERSAL_DEPENDENCY" });
+  await post(inverse(await allocationId(one)));
+  await expect(requireClear(targetJournal)).rejects.toMatchObject({ message: "REVERSAL_DEPENDENCY" });
+  await requireClear(firstJournal, "2026-03-01");
+  await expect(requireClear(firstJournal, "2026-02-28")).rejects.toMatchObject({ message: "REVERSAL_DEPENDENCY" });
+  await post(inverse(await allocationId(two), "2026-03-02"));
+  await requireClear(targetJournal, "2026-03-02");
+  await expect(requireClear(targetJournal, "2026-03-01")).rejects.toMatchObject({ message: "REVERSAL_DEPENDENCY" });
+  expect((await admin.query("SELECT count(*)::int AS n FROM journal_reversal_holds WHERE journal_id=$1", [targetJournal])).rows[0].n).toBe(2);
+  expect((await admin.query("SELECT count(*)::int AS n FROM journal_reversal_hold_releases WHERE journal_id=$1", [targetJournal])).rows[0].n).toBe(2);
+});
+it.each(["payment", "reconciliation", "close"])("an unrelated %s dependency blocks inverse commit, including a colliding allocation ID", async type => {
+  const p = await pair(), source = randomUUID(), journal = await post(apply(p.settlement, p.target), source), allocation = await allocationId(source);
+  await hold(journal, allocation, type); const failedSource = randomUUID();
+  await expect(post(inverse(allocation), failedSource)).rejects.toMatchObject({ message: "REVERSAL_DEPENDENCY" });
+  expect((await admin.query("SELECT count(*)::int AS n FROM subledger_sources WHERE id=$1", [failedSource])).rows[0].n).toBe(0);
+  expect((await admin.query("SELECT count(*)::int AS n FROM journal_reversal_hold_releases WHERE dependency_id=$1", [allocation])).rows[0].n).toBe(0);
+  expect((await balance(p.target)).outstandingAmount).toBe("0.00");
+});
+it("same-transaction and later holds cannot attach after inverse creation", async () => {
+  const p = await pair(), source = randomUUID(), journal = await post(apply(p.settlement, p.target), source), allocation = await allocationId(source), failedSource = randomUUID();
+  await expect(internal(async client => {
+    await writeSubledgerSource(client, org, entity, failedSource, inverse(allocation), randomUUID());
+    // The original now has an inverse row, so the hold guard denies this order.
+    await client.query("INSERT INTO journal_reversal_holds VALUES($1,$2,$3,'close',$4,'Synthetic late dependency')", [org, entity, journal, randomUUID()]);
+  })).rejects.toMatchObject({ message: "ALREADY_REVERSED" });
+  expect((await admin.query("SELECT count(*)::int AS n FROM subledger_sources WHERE id=$1", [failedSource])).rows[0].n).toBe(0);
+  await post(inverse(allocation)); await expect(hold(journal)).rejects.toMatchObject({ message: "ALREADY_REVERSED" });
+});
+it("racing dependency and inverse commits cannot both succeed", async () => {
+  const p = await pair(), source = randomUUID(), journal = await post(apply(p.settlement, p.target), source), allocation = await allocationId(source);
+  const results = await Promise.allSettled([post(inverse(allocation)), hold(journal)]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  const reason = results.find(result => result.status === "rejected") as PromiseRejectedResult;
+  expect(["ALREADY_REVERSED", "REVERSAL_DEPENDENCY"]).toContain(reason.reason.message);
+});
+it("the common gate remains private, scoped and revocation-sensitive", async () => {
+  const source = randomUUID(), journal = await post(item(), source); await requireClear(journal);
+  await expect(withScope(finance, org, entity, "journals.read", client => client.query("SELECT app_security.require_journal_dependencies_clear($1,$2,$3,$4)", [org, entity, journal, "2026-12-31"]))).rejects.toMatchObject({ code: "42501" });
+  await expect(requireClear(randomUUID())).rejects.toMatchObject({ message: "NOT_FOUND" });
+  await expect(internal(client => client.query("SELECT app_security.require_journal_dependencies_clear($1,$2,$3,$4)", [org, other, journal, "2026-12-31"]))).rejects.toMatchObject({ message: "FORBIDDEN" });
+  await expect(requireClear(journal, "1899-12-31")).rejects.toMatchObject({ message: "INVALID_CONTENT" });
+  await admin.query("UPDATE memberships SET active=false WHERE user_id=$1", [finance]);
+  try { await expect(requireClear(journal)).rejects.toMatchObject({ message: "FORBIDDEN" }); }
+  finally { await admin.query("UPDATE memberships SET active=true WHERE user_id=$1", [finance]); }
+});
+it("the window checker agrees with independent rectangle sums before rejecting an invalid backdated commit", async () => {
+  const p = await pair(), original = randomUUID(); await post(apply(p.settlement, p.target, "3000.00", "2026-02-03"), original);
+  await post(inverse(await allocationId(original), "2026-02-05"));
+  async function compare(client: PoolClient, expected: boolean) {
+    const result = await client.query(`WITH e AS (
+      SELECT 'target' AS book,effective_date,recorded_at,CASE WHEN reversal_of IS NULL THEN amount ELSE -amount END AS amount,3000::numeric AS maximum FROM subledger_allocations WHERE organization_id=$1 AND legal_entity_id=$2 AND open_item_id=$3
+      UNION ALL SELECT 'capacity',effective_date,recorded_at,CASE WHEN reversal_of IS NULL THEN amount ELSE -amount END,5000::numeric FROM subledger_allocations WHERE organization_id=$1 AND legal_entity_id=$2 AND settlement_id=$4
+    ), d AS (SELECT DISTINCT book,effective_date FROM e), k AS (SELECT DISTINCT book,recorded_at FROM e)
+    SELECT app_security.allocation_rectangles_within_limits($1,$2,$3,$4,3000,5000) AS optimized, NOT EXISTS(
+      SELECT 1 FROM d JOIN k ON k.book=d.book JOIN e ON e.book=d.book AND e.effective_date<=d.effective_date AND e.recorded_at<=k.recorded_at
+      GROUP BY d.book,d.effective_date,k.recorded_at HAVING sum(e.amount)<0 OR sum(e.amount)>max(e.maximum)
+    ) AS reference`, [org, entity, p.target, p.settlement]);
+    expect(result.rows).toEqual([{ optimized: expected, reference: expected }]);
+  }
+  await internal(client => compare(client, true));
+  const invalid = randomUUID();
+  await expect(internal(async client => {
+    await writeSubledgerSource(client, org, entity, invalid, apply(p.settlement, p.target, "3000.00", "2026-02-04"), randomUUID());
+    await compare(client, false);
+  })).rejects.toMatchObject({ message: "OVER_ALLOCATION" });
+  expect((await admin.query("SELECT count(*)::int AS n FROM subledger_sources WHERE id=$1", [invalid])).rows[0].n).toBe(0);
+  await post(apply(p.settlement, p.target, "3000.00", "2026-02-06")); await internal(client => compare(client, true));
+  await expect(withScope(finance, org, entity, "journals.read", client => client.query("SELECT app_security.allocation_rectangles_within_limits($1,$2,$3,$4,3000,5000)", [org, entity, p.target, p.settlement]))).rejects.toMatchObject({ code: "42501" });
 });

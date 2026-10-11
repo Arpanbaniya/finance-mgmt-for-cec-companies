@@ -2,7 +2,7 @@
 
 ## Boundary
 
-The R1 subledger foundation is a pure domain engine, not a posted payment service or a public financial API. `domain/subledger.ts` validates retained journal-line evidence and derives balances from immutable allocation/reversal events. The engine does not load a database, authenticate a caller, acquire locks, post money, or prove that supplied evidence exists in PostgreSQL. Its inputs belong to trusted server adapters, never to a client request.
+This ADR describes the pure domain engine, not a posted payment service or a public financial API. `domain/subledger.ts` validates retained journal-line evidence and derives balances from immutable allocation/reversal events. The engine does not load a database, authenticate a caller, acquire locks, post money, or prove that supplied evidence exists in PostgreSQL. Its inputs belong to trusted server adapters, never to a client request. The accepted internal persistence/dependency foundation is described in ADR0014–0015; business-source workflows remain disabled.
 
 No new routes, permissions, runtime database grants, migrations or ordinary manual-control posting exceptions are introduced. The existing catalog remains unchanged. Party masters, opening batches, invoices, bills and settlements remain unavailable until their own controlled workflows ship.
 
@@ -25,7 +25,7 @@ Dates and retained accounting evidence are validated before computing a report. 
 
 The internal storage increment is described in [0014-subledger-persistence.md](0014-subledger-persistence.md). The remainder below is the foundation's activation checklist, not a claim that all source workflows or pilot performance are accepted.
 
-K015 remains in progress. Pure tests do not prove journal/subledger linkage in the database, transaction atomicity, RLS or allocation races. The next increment must add scoped composite foreign keys and append-only storage, controlled same-transaction source production, journal/subledger deferred consistency guards, and a restricted-runtime historical reader. No generic runtime source/evidence builder may be exposed.
+At the pure-engine stage, K015 was in progress. Pure tests alone do not prove journal/subledger linkage in the database, transaction atomicity, RLS or allocation races. ADR0014–0015 now record the accepted scoped composite references/append-only storage, controlled same-transaction source production, deferred consistency guards, restricted-runtime historical reader, dependency clearing and growth measurements. No generic runtime source/evidence builder may be exposed.
 
 Production adapters must load evidence from immutable scoped ledger rows, verify counterparty provenance, lock source/target IDs in stable order, recheck current authority/open periods, and persist source, balanced journal, allocation, audit, durable command result and event atomically. A deposit application must also prove its deposit/advance contra line; an allocation reversal must reverse that reclassification, not merely supply an inverse AR/AP line. This engine alone does not prove those complementary GL effects.
 

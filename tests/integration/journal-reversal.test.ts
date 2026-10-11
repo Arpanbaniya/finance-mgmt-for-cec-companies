@@ -39,6 +39,13 @@ afterAll(async()=>{
 const reverse=(id:string,version:number,key=randomUUID(),date="2026-11-10",actor=finance)=>reverseJournal(actor,org,entity,id,{postingDate:date,reason:"Correct fictional original adjustment"},version,key,randomUUID());
 async function original(){const a=await approved();await post(a.id,a.version);return getJournal(finance,org,entity,a.id);}
 async function reviewed(id:string){await submitJournal(finance,org,entity,id,{},1,randomUUID(),randomUUID());await approve(id,2);await approve(id,3,second);return getJournal(finance,org,entity,id);}
+it("accountants retain inverse-description editing without gaining approval or posting authority",async()=>{
+  const posted=await original(),request=await reverse(posted.id,posted.version);
+  const edited=await patchJournal(maker,org,entity,request.resourceId,{description:"Accountant clarified the fictional inverse"},1,randomUUID());
+  expect(edited).toMatchObject({version:2,status:"draft",description:"Accountant clarified the fictional inverse"});
+  await expect(approveJournal(maker,org,entity,request.resourceId,{reason:"No self-approval authority"},2,randomUUID(),randomUUID())).rejects.toMatchObject({status:403});
+  await expect(postJournal(maker,org,entity,request.resourceId,{},2,randomUUID(),randomUUID())).rejects.toMatchObject({status:403});
+});
 it("prepares exact inverse lines and requires fresh independent approval before dated posting",async()=>{
   const a=await original(),before=(await admin.query("SELECT * FROM manual_journal_drafts WHERE id=$1",[a.id])).rows[0],beforeLedger=(await admin.query("SELECT * FROM journal_entries WHERE id=$1",[a.journalId])).rows[0];
   const request=await reverse(a.id,a.version),r=await getJournal(finance,org,entity,request.resourceId);expect(request.status).toBe("draft");expect(r).toMatchObject({reversalOf:a.journalId,reversalOfSourceId:a.id,eventKind:"reverse",postingDate:"2026-11-10",review:null});
