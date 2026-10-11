@@ -16,6 +16,9 @@ const finance = actors.finance_manager, reader = actors.auditor;
 const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
 const accounts: Record<string, string> = {};
 const interval = { fromDate: "2026-01-01", toDateExclusive: "2027-01-01" };
+// The existing GitHub workflow exposes its isolated PostgreSQL container at
+// 5432. Desktop fixtures use 55432; neither path may use a hosted database.
+const fixturePort = process.env.GITHUB_ACTIONS === "true" ? "5432" : "55432";
 let initialCutoff = "", initialJournal = "";
 async function internal<T>(work: (client: PoolClient) => Promise<T>, company = entity) {
   const client = await admin.connect();
@@ -33,7 +36,7 @@ const read = (query: unknown = { ...interval, knownAt: initialCutoff }, actor = 
 beforeAll(async () => {
   for (const name of ["MIGRATION_DATABASE_URL", "DATABASE_URL"]) {
     const url = new URL(process.env[name] ?? "");
-    if (url.hostname !== "127.0.0.1" || url.port !== "55432" || url.pathname !== "/kaamledger") throw new Error("Statement fixtures require the dedicated local database.");
+    if (url.hostname !== "127.0.0.1" || url.port !== fixturePort || url.pathname !== "/kaamledger") throw new Error("Statement fixtures require the dedicated local database.");
   }
   for (const id of Object.values(actors)) await admin.query("INSERT INTO auth_user(id,name,email,email_verified,created_at,updated_at) VALUES($1,'Statement fixture',$2,true,now(),now())", [id, `${id}@example.invalid`]);
   await admin.query("INSERT INTO organizations(id,name) VALUES($1,'Independent statement fixture')", [org]);
@@ -58,7 +61,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   const url = new URL(process.env.MIGRATION_DATABASE_URL ?? "");
-  if (url.hostname !== "127.0.0.1" || url.port !== "55432" || url.pathname !== "/kaamledger") return;
+  if (url.hostname !== "127.0.0.1" || url.port !== fixturePort || url.pathname !== "/kaamledger") return;
   const client = await admin.connect();
   const triggers = [["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];
   try {
