@@ -173,8 +173,11 @@ export function validateSubledgerHistory(value: unknown): History {
       .reduce((sum, event) => sum.plus((event as Application).amount), new Exact(0));
     if (!total.equals(source.amount)) fail("DIRECT_SETTLEMENT_INCOMPLETE", "Direct settlement must allocate its exact full amount at posting.");
   }
-  usage(history, history.events);
-  usage(history, history.events, "recorded");
+  // Checking the complete business order and recorded order alone misses
+  // rectangles where two applications are visible but both inverses are not.
+  // Each knowledge prefix must be valid at every business-date prefix.
+  for (const knownAt of new Set(history.events.map(event => event.recordedAt)))
+    usage(history, history.events.filter(event => event.recordedAt <= knownAt));
   return history;
 }
 

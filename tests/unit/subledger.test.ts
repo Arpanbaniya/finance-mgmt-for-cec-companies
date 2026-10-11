@@ -97,6 +97,17 @@ describe("exact source-linked subledger history", () => {
     const reuse = application(31, "3000.00", "2026-03-02");
     expectCode(() => appendAllocationEvents(fixture(), [a, r, reuse]), "OVER_ALLOCATION");
   });
+  it("checks every business-date and knowledge rectangle, not just the two complete orders", () => {
+    const a = application(30, "3000.00", "2026-02-01"), ra = reversal(a, 40, "2026-02-02");
+    const b = application(31, "3000.00", "2026-02-03"), rb = reversal(b, 41, "2026-02-05");
+    for (const [event, day] of [[a, "2026-02-03"], [ra, "2026-02-05"], [b, "2026-02-01"], [rb, "2026-02-02"]] as const) {
+      event.recordedAt = instant(day); event.line.recordedAt = event.recordedAt;
+    }
+    // Complete business order A, inverse A, B, inverse B and complete
+    // knowledge order B, inverse B, A, inverse A each stay within 3000.
+    // At Feb 3 / known Feb 3 both applications appear without either inverse.
+    expectCode(() => validateSubledgerHistory({ ...fixture(), events: [a, ra, b, rb] }), "OVER_ALLOCATION");
+  });
   it("allows one direct settlement line to allocate exactly across several invoices", () => {
     const h = fixture(); h.openItems.push({ ...structuredClone(h.openItems[0]), id: id(11), line: { ...h.openItems[0].line, journalId: id(101) } });
     h.settlements[0] = { ...h.settlements[0], mode: "direct", amount: "5000.00",

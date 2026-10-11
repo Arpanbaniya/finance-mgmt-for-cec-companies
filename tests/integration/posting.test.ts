@@ -51,6 +51,7 @@ afterAll(async () => {
     await client.query("BEGIN"); for(const [table,trigger] of triggers) await client.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
     for(const table of ["journal_lines","journal_entries","document_numbers","document_series","fiscal_periods","fiscal_years","account_versions","accounts","branches","audit_events","idempotency_results","memberships","legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`,[org]);
     await client.query("DELETE FROM organizations WHERE id=$1",[org]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])",[[finance,auditor]]);
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");
     for(const [table,trigger] of triggers) await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`); await client.query("COMMIT");
   } catch(error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); await admin.end(); await databasePool().end(); }
 });

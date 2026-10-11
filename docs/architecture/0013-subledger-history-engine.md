@@ -11,7 +11,7 @@ No new routes, permissions, runtime database grants, migrations or ordinary manu
 - Open items originate from exact AR/AP control lines belonging to an invoice, bill or opening batch. Their amount equals the retained line, with the correct debit/credit direction. One line cannot introduce the same balance twice.
 - Capacity originates from a settlement's exact control line and source identity. Direct receipts/payments fully allocate their AR/AP control amount in that original posting. They cannot create an unapplied deposit by reversing an allocation or spending the same source again.
 - On-account receipts/payments retain customer-deposit/supplier-advance capacity separately from open items. Application requires a separate exact AR/AP reclassification line, not reuse of the receipt/payment line. No implicit netting or cross-party allocation is allowed.
-- Source, target and journal evidence agree on organization, entity, NPR, party, AR/AP side and target control account. Amounts are exact decimal strings. A history cannot overrun capacity or a target at a business-date or recorded-time prefix, even if a later reversal would hide the error in the final total.
+- Source, target and journal evidence agree on organization, entity, NPR, party, AR/AP side and target control account. Amounts are exact decimal strings. A history cannot overrun capacity or a target at any business-date/recorded-time intersection, even if either complete ordering or a later reversal would hide the error in the final total.
 - Reversal is a new event referencing one original application. It requires dated inverse control-line evidence, the retained account/version, and cannot precede the original business or recorded date. Duplicate reversal and reversal chains fail. Original records remain unchanged.
 - Duplicate IDs/evidence fail; durable idempotency belongs to the eventual source command adapter, not this pure append planner.
 
@@ -22,6 +22,8 @@ No new routes, permissions, runtime database grants, migrations or ordinary manu
 Dates and retained accounting evidence are validated before computing a report. Malformed or inconsistent histories fail closed; missing records do not become zero. Business ordering is date, recorded instant and stable ID; an application precedes its inverse at an identical instant. Caller arrays and snapshots are not mutated.
 
 ## Required persistence work before acceptance
+
+The internal storage increment is described in [0014-subledger-persistence.md](0014-subledger-persistence.md). The remainder below is the foundation's activation checklist, not a claim that all source workflows or pilot performance are accepted.
 
 K015 remains in progress. Pure tests do not prove journal/subledger linkage in the database, transaction atomicity, RLS or allocation races. The next increment must add scoped composite foreign keys and append-only storage, controlled same-transaction source production, journal/subledger deferred consistency guards, and a restricted-runtime historical reader. No generic runtime source/evidence builder may be exposed.
 
