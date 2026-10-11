@@ -9,6 +9,7 @@ import { createFiscalYear } from "@/features/accounting/setup-service";
 import { createPolicy, activatePolicy } from "@/features/approvals/service";
 import { approveJournalSource, postAuthorizedJournal } from "@/features/accounting/authorized-posting";
 import { createJournal, patchJournal, cancelJournal, getJournal, submitJournal, approveJournal, rejectJournal, postJournal } from "@/features/accounting/journal-service";
+import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
 config({ path: ".env.local", quiet: true });
 const org=randomUUID(),entity=randomUUID(),otherEntity=randomUUID(),maker=`lifecycle-${randomUUID()}`,finance=`lifecycle-${randomUUID()}`,checker=`lifecycle-${randomUUID()}`,second=`lifecycle-${randomUUID()}`,reader=`lifecycle-${randomUUID()}`;
 const users=[maker,finance,checker,second,reader],admin=new Pool({connectionString:process.env.MIGRATION_DATABASE_URL});
@@ -69,6 +70,9 @@ it("rejection and cancellation retain frozen history but prevent consumption",as
 it("racing post commands commit one ledger, source transition, number, outbox and original response",async()=>{
   const a=await approved(),key=randomUUID();const [x,y]=await Promise.all([post(a.id,a.version,key),post(a.id,a.version,key)]);expect(x).toEqual(y);expect(x.status).toBe("posted");expect(await post(a.id,a.version,randomUUID(),second)).toEqual(x);
   const current=await getJournal(reader,org,entity,a.id);expect(current.journalId).toBe(x.journalId);expect(current.number).toMatch(/journal/i);expect(current.review?.snapshotValid).toBe(true);
+  const ledger=await readGeneralLedger(reader,org,entity,{accountId:expense,fromDate:"2026-01-01",toDateExclusive:"2027-01-01"});
+  const sourceLine=ledger.rows.find(line=>line.journalId===x.journalId)!;expect(sourceLine.manualJournalId).toBe(a.id);
+  expect((await getJournal(reader,org,entity,sourceLine.manualJournalId!)).review?.validApprovals).toBe(2);
   for(const table of ['journal_entries','document_numbers','journal_posting_events','journal_source_postings'])expect((await admin.query(`SELECT * FROM ${table} WHERE source_id=$1`,[a.id])).rowCount).toBe(1);
   expect((await admin.query("SELECT * FROM audit_events WHERE target_id=$1 AND action='journal.post'",[a.id])).rowCount).toBe(1);expect((await admin.query("SELECT * FROM manual_journal_execution_permits WHERE draft_id=$1",[a.id])).rowCount).toBe(0);
   await expect(patchJournal(maker,org,entity,a.id,{description:"Rewrite posted source"},current.version,randomUUID())).rejects.toMatchObject({code:"INVALID_STATE"});await expect(cancelJournal(maker,org,entity,a.id,{reason:"Erase posted source"},current.version,randomUUID(),randomUUID())).rejects.toMatchObject({code:"INVALID_STATE"});await expect(admin.query("UPDATE manual_journal_drafts SET body='{}' WHERE id=$1",[a.id])).rejects.toThrow(/immutable/);

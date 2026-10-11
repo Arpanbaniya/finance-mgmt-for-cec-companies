@@ -1,17 +1,8 @@
 import { z } from "zod";
-import { AccountMovement, calculateStatements, ReportInstant, StatementInterval } from "@/domain/statements";
-import { CalendarDate } from "@/domain/finance-setup";
+import { AccountMovement, calculateStatements, StatementInterval } from "@/domain/statements";
 import { DomainError } from "@/domain/errors";
-import { withScope } from "@/features/identity/scope";
-
-const Metadata = z.strictObject({ organizationId: z.uuid(), entityId: z.uuid(), currency: z.literal("NPR"),
-  fromDate: CalendarDate, toDateExclusive: CalendarDate, asOfDate: CalendarDate, knownAt: ReportInstant, generatedAt: ReportInstant,
-  ledgerWatermark: ReportInstant.nullable(), journalCount: z.string().regex(/^(0|[1-9]\d*)$/),
-  fiscalYearId: z.uuid(), fiscalYearStart: CalendarDate, fiscalYearEndExclusive: CalendarDate,
-  retainedEarningsAccountId: z.uuid(), retainedEarningsAccountVersion: z.number().int().positive(),
-  reportingProfile: z.enum(["demo_accrual", "review_required"]), policyStatus: z.enum(["demo", "review_required"]),
-  reportVersion: z.literal("statement-foundation-v1"), mappingBasis: z.literal("posted-account-versions"),
-});
+import { withLedgerReportScope } from "./scope";
+import { StatementMetadata } from "./contracts";
 
 // One scoped aggregate scan; money stays numeric in PostgreSQL and strings at
 // the boundary. No raw journal payload, actor or private dimension is returned.
@@ -65,16 +56,7 @@ WHERE e.organization_id=$1 AND e.id=$2`;
 export async function readStatementFoundation(userId: string, organizationId: string, entityId: string, value: unknown) {
   z.uuid().parse(organizationId); z.uuid().parse(entityId);
   const query = StatementInterval.parse(value);
-  return withScope(userId, organizationId, entityId, "reports.read", async client => {
-    const allowed = await client.query("SELECT app_security.can_read_accounts($1) AS allowed", [organizationId]);
-    // Owner reports cannot silently become an empty report under finance RLS.
-    // A separate aggregate-only owner boundary is required before the API ships.
-    if (!allowed.rows[0].allowed) throw new DomainError("FORBIDDEN", "Finance ledger read authority is required for this internal report.", 403);
-    await client.query("SET LOCAL lock_timeout='2s'");
-    await client.query("SET LOCAL statement_timeout='5s'");
-    // Existing posters lock this same organization before setting recorded_at.
-    // Wait for in-flight postings before capturing a new knowledge cutoff.
-    await client.query("SELECT app_security.lock_policy_scope($1,$2)", [organizationId, entityId]);
+  return withLedgerReportScope(userId, organizationId, entityId, async client => {
     const result = await client.query(StatementAggregatesSQL, [organizationId, entityId, query.fromDate, query.toDateExclusive, query.knownAt ?? null]);
     if (!result.rowCount) throw new DomainError("FISCAL_YEAR_REQUIRED", "Configure the fiscal year containing the report's as-of date.");
     const row = result.rows[0];
@@ -84,10 +66,10 @@ export async function readStatementFoundation(userId: string, organizationId: st
     const movements = z.array(AccountMovement).max(10000).parse(row.rows.map((movement: Record<string, unknown>) => ({ ...movement,
       ...Object.fromEntries(["openingDebit", "openingCredit", "periodDebit", "periodCredit", "yearDebit", "yearCredit"].map(key => [key, movement[key] === "0" ? "0.00" : movement[key]])),
     })));
-    return { metadata: Metadata.parse(row.metadata), ...calculateStatements(movements),
+    return { metadata: StatementMetadata.parse(row.metadata), ...calculateStatements(movements),
       limitations: ["Income-tax/direct-cost classifications and comparative reporting are not implemented.",
         "Prior unclosed results are presented separately, not silently transferred to retained earnings.",
         "This temporal read is not an approved durable close snapshot or year-close workflow.",
-        "General-ledger pagination, public report contracts, owner-only aggregates and report screens remain pending."] };
+        "Public report contracts, owner-only aggregates and report screens remain pending."] };
   });
 }

@@ -8,6 +8,8 @@ import { createAccount, patchAccount } from "@/features/accounting/accounts-serv
 import { createFiscalYear } from "@/features/accounting/setup-service";
 import { readOpenBalances, writeSubledgerSource } from "@/features/accounting/subledger-service";
 import type { SubledgerSourceValue } from "@/domain/subledger-source";
+import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
+import { readStatementFoundation } from "@/features/reporting/statement-service";
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), entity = randomUUID(), other = randomUUID(), party = randomUUID(), otherParty = randomUUID();
 const finance = `subledger-${randomUUID()}`, reader = `subledger-${randomUUID()}`, users = [finance, reader];
@@ -77,6 +79,14 @@ it("persists real AR/deposit journals, reclassifies once and reconstructs both c
   const totals = await admin.query("SELECT a.control_type,sum(l.debit-l.credit)::text AS net FROM journal_lines l JOIN accounts a ON a.id=l.account_id WHERE l.journal_id IN (SELECT journal_id FROM subledger_sources WHERE id=ANY($1::uuid[])) GROUP BY a.control_type", [[p.itemSource, p.settlement, command]]);
   expect(totals.rows).toEqual(expect.arrayContaining([{ control_type: "ar", net: "0.00" }, { control_type: "customer_deposits", net: "-2000.00" }, { control_type: "cash", net: "5000.00" }]));
   expect((await admin.query("SELECT total_debit::text AS debit,total_credit::text AS credit FROM journal_entries WHERE id=$1", [journal])).rows).toEqual([{ debit: "3000.00", credit: "3000.00" }]);
+  const ledger = await readGeneralLedger(reader, org, entity, { accountId: accounts.ar, fromDate: "2026-01-01", toDateExclusive: "2026-02-02" });
+  expect(ledger.totals).toMatchObject({ periodDebit: "3000.00", periodCredit: "3000.00", closingBalance: "0.00", lineCount: "2" });
+  expect(ledger.rows.map(row => row.source.type)).toEqual(["invoice", "settlement"]);
+  expect(ledger.rows.map(row => row.runningBalance)).toEqual(["3000.00", "0.00"]);
+  expect(ledger.rows.every(row => row.manualJournalId === null)).toBe(true);
+  const statement = await readStatementFoundation(reader, org, entity, { fromDate: "2026-01-01", toDateExclusive: "2026-02-02", knownAt: ledger.metadata.knownAt });
+  expect(statement.trialBalance.totals.closing).toEqual({ debit: "5000.00", credit: "5000.00" });
+  expect(statement.balanceSheet).toMatchObject({ assets: "5000.00", liabilities: "2000.00", currentYearResult: "3000.00", equity: "3000.00", difference: "0.00" });
 });
 it("AP advance application follows the independent payable direction", async () => {
   const p = await pair("ap"); const journal = await post(apply(p.settlement, p.target, "1000.01"));

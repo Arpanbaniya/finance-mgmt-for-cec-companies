@@ -8,6 +8,9 @@ import { createAccount, patchAccount } from "@/features/accounting/accounts-serv
 import { createFiscalYear } from "@/features/accounting/setup-service";
 import { writeManualJournal } from "@/features/accounting/posting-kernel";
 import { readStatementFoundation } from "@/features/reporting/statement-service";
+import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
+import { decodeLedgerCursor, encodeLedgerCursor } from "@/features/reporting/ledger-cursor";
+import { LedgerQuery } from "@/domain/general-ledger";
 
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), entity = randomUUID(), other = randomUUID();
@@ -164,4 +167,70 @@ it("captures new knowledge only after an in-flight scoped posting commits", asyn
     await writer.query("ROLLBACK"); writer.release();
     if (pending) await pending.catch(() => undefined);
   }
+});
+it("reads real account opening/movement/closing without inventing source links for primitive fixtures", async () => {
+  const report = await readGeneralLedger(reader, org, entity, { ...interval, accountId: accounts.BANK, knownAt: initialCutoff });
+  expect(report.totals).toEqual({ openingBalance: "0.00", periodDebit: "98500.00", periodCredit: "0.00", closingBalance: "98500.00", lineCount: "1" });
+  expect(report.rows[0]).toMatchObject({ journalId: initialJournal, ordinal: 1, accountName: "BANK", accountVersion: 1, runningBalance: "98500.00", manualJournalId: null });
+  expect(report.metadata).toMatchObject({ knownAt: initialCutoff, accountId: accounts.BANK, balanceConvention: "debit-positive", watermarkScope: "selected-account" });
+  const creditAccount = await readGeneralLedger(reader, org, entity, { ...interval, accountId: accounts.CAPITAL, knownAt: initialCutoff });
+  expect(creditAccount.totals.closingBalance).toBe("-100000.00"); expect(creditAccount.rows[0].runningBalance).toBe("-100000.00");
+  const opening = await readGeneralLedger(reader, org, entity, { fromDate: "2026-03-01", toDateExclusive: "2027-01-01", accountId: accounts.BANK, knownAt: initialCutoff });
+  expect(opening.rows).toEqual([]); expect(opening.page).toEqual({ precedingBalance: "98500.00", endingBalance: "98500.00", nextCursor: null });
+});
+it("paginates repeated account lines in one journal with stable ordinal ties and independent exact prefix balances", async () => {
+  const receipt = await post("2026-05-01", Array.from({ length: 130 }, () => [
+    { accountId: accounts.BANK, accountVersion: 2, debit: "0.01", credit: "0.00" },
+    { accountId: accounts.CAPITAL, debit: "0.00", credit: "0.01" },
+  ]).flat());
+  const base = { fromDate: "2026-05-01", toDateExclusive: "2026-06-01", accountId: accounts.BANK, limit: 25 };
+  let page = await readGeneralLedger(reader, org, entity, base);
+  expect(page.totals).toEqual({ openingBalance: "98510.00", periodDebit: "1.30", periodCredit: "0.00", closingBalance: "98511.30", lineCount: "130" });
+  const knownAt = page.metadata.knownAt, rows = [...page.rows];
+  expect(page.page).toMatchObject({ precedingBalance: "98510.00", endingBalance: "98510.25" });
+  let pages = 1;
+  while (page.page.nextCursor) {
+    const previousEnding = page.page.endingBalance;
+    page = await readGeneralLedger(reader, org, entity, { ...base, cursor: page.page.nextCursor });
+    expect(page.metadata.knownAt).toBe(knownAt); expect(page.page.precedingBalance).toBe(previousEnding);
+    expect(page.rows.length).toBeLessThanOrEqual(25); rows.push(...page.rows); pages++;
+  }
+  expect(pages).toBe(6); expect(rows.map(row => row.ordinal)).toEqual(Array.from({ length: 130 }, (_, index) => index * 2 + 1));
+  expect(new Set(rows.map(row => `${row.journalId}:${row.ordinal}`)).size).toBe(130);
+  expect(rows.every(row => row.journalId === receipt.id && row.accountVersion === 2)).toBe(true);
+  expect(page.page.endingBalance).toBe("98511.30");
+});
+it("pins later pages and retained names despite new backdated postings and unused metadata versions", async () => {
+  const base = { fromDate: "2026-05-01", toDateExclusive: "2026-06-01", accountId: accounts.BANK, limit: 25 };
+  const first = await readGeneralLedger(reader, org, entity, base), cursor = first.page.nextCursor!;
+  const before = await readGeneralLedger(reader, org, entity, { ...base, cursor });
+  await post("2026-05-01", [{ accountId: accounts.BANK, accountVersion: 2, debit: "0.02", credit: "0.00" }, { accountId: accounts.CAPITAL, debit: "0.00", credit: "0.02" }]);
+  await patchAccount(finance, org, entity, accounts.BANK, { name: "Unused future metadata" }, 2, randomUUID());
+  const after = await readGeneralLedger(reader, org, entity, { ...base, cursor });
+  expect(after.rows).toEqual(before.rows); expect(after.totals).toEqual(before.totals); expect(after.account).toEqual(before.account);
+  expect(after.metadata.knownAt).toBe(first.metadata.knownAt); expect(after.account.name).toBe("New asset name");
+  const current = await readGeneralLedger(reader, org, entity, base);
+  expect(current.totals.lineCount).toBe("131"); expect(current.totals.closingBalance).toBe("98511.32");
+  expect(current.account).toMatchObject({ name: "New asset name", headerVersion: 2 });
+});
+it("checks real cursor anchors and rejects changed context, foreign accounts, missing scope and future cutoffs", async () => {
+  const base = { fromDate: "2026-05-01", toDateExclusive: "2026-06-01", accountId: accounts.BANK, limit: 25 };
+  const first = await readGeneralLedger(reader, org, entity, base), cursor = first.page.nextCursor!;
+  const decoded = decodeLedgerCursor(cursor, org, entity, LedgerQuery.parse(base));
+  await expect(readGeneralLedger(reader, org, entity, { ...base, cursor: encodeLedgerCursor({ ...decoded, ordinal: decoded.ordinal + 1 }) })).rejects.toMatchObject({ code: "INVALID_CURSOR", status: 400 });
+  for (const patch of [{ accountId: accounts.CAPITAL }, { fromDate: "2026-05-02" }, { knownAt: initialCutoff }]) await expect(readGeneralLedger(reader, org, entity, { ...base, ...patch, cursor })).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  await expect(readGeneralLedger(reader, org, entity, { ...base, accountId: randomUUID() })).rejects.toMatchObject({ status: 404 });
+  await expect(readGeneralLedger(reader, org, other, base)).rejects.toMatchObject({ status: 404 });
+  await expect(readGeneralLedger(reader, org, entity, { ...base, knownAt: "9999-12-31T23:59:59.999999Z" })).rejects.toMatchObject({ code: "INVALID_REPORT_CUTOFF" });
+  for (const actor of [actors.owner, actors.organization_admin, actors.site_supervisor]) await expect(readGeneralLedger(actor, org, entity, base)).rejects.toMatchObject({ status: 403 });
+});
+it("retains the microsecond inclusion boundary and rechecks revoked access on cursor reads", async () => {
+  const timestamp = (await admin.query("SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS exact,to_char((created_at-interval '1 microsecond') AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS earlier FROM journal_entries WHERE id=$1", [initialJournal])).rows[0];
+  const base = { ...interval, accountId: accounts.BANK };
+  expect((await readGeneralLedger(reader, org, entity, { ...base, knownAt: timestamp.earlier })).rows).toEqual([]);
+  expect((await readGeneralLedger(reader, org, entity, { ...base, knownAt: timestamp.exact })).rows[0].runningBalance).toBe("98500.00");
+  const first = await readGeneralLedger(reader, org, entity, { ...base, limit: 1 });
+  await admin.query("UPDATE memberships SET active=false WHERE organization_id=$1 AND user_id=$2", [org, reader]);
+  try { await expect(readGeneralLedger(reader, org, entity, { ...base, limit: 1, cursor: first.page.nextCursor! })).rejects.toMatchObject({ status: 404 }); }
+  finally { await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, reader]); }
 });

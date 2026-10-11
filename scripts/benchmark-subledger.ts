@@ -10,6 +10,10 @@ import { createFiscalYear } from "../features/accounting/setup-service";
 import { writeManualJournal } from "../features/accounting/posting-kernel";
 import { OpenBalancesSQL, readOpenBalances, writeSubledgerSource } from "../features/accounting/subledger-service";
 import type { SubledgerSourceValue } from "../domain/subledger-source";
+import { GeneralLedgerSQL, readGeneralLedger } from "../features/reporting/general-ledger-service";
+import { readStatementFoundation } from "../features/reporting/statement-service";
+import { withLedgerReportScope } from "../features/reporting/scope";
+import { encodeLedgerCursor } from "../features/reporting/ledger-cursor";
 
 config({ path: ".env.local", quiet: true });
 for (const name of ["MIGRATION_DATABASE_URL", "DATABASE_URL"]) {
@@ -33,6 +37,7 @@ const post = (body: SubledgerSourceValue, source = randomUUID()) => internal(cli
 const day = (offset: number) => new Date(Date.UTC(2026, 0, 15 + offset)).toISOString().slice(0, 10);
 const p95 = (values: number[]) => Number([...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1].toFixed(3));
 const started = performance.now();
+const includeReports = process.argv.includes("--reports");
 try {
   await admin.query("INSERT INTO auth_user(id,name,email,email_verified,created_at,updated_at) VALUES($1,'Local subledger benchmark',$2,true,now(),now())", [user, `${user}@example.invalid`]);
   await admin.query("INSERT INTO organizations(id,name) VALUES($1,'Local subledger benchmark')", [org]);
@@ -93,8 +98,49 @@ try {
     for (const child of (node.Plans ?? []) as Record<string, unknown>[]) visit(child);
   }
   visit(plan.Plan);
+  let reporting: Record<string, unknown> | undefined;
+  if (includeReports) {
+    const ledgerQuery = { accountId: accounts.expense, fromDate: "2026-01-01", toDateExclusive: "2026-01-02", limit: 100 };
+    const first = await readGeneralLedger(user, org, entity, ledgerQuery), knowledge = first.metadata.knownAt;
+    if (lineCount !== 100000 || first.totals.lineCount !== "49299" || first.totals.periodDebit !== "492.99" || first.totals.closingBalance !== "492.99") throw new Error("Independent dense-ledger totals failed");
+    const midpoint = (await admin.query(`SELECT j.id,l.ordinal FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id
+      WHERE l.organization_id=$1 AND l.legal_entity_id=$2 AND l.account_id=$3 ORDER BY j.posting_date,j.id,l.ordinal OFFSET 24649 LIMIT 1`, [org, entity, accounts.expense])).rows[0];
+    const midCursor = encodeLedgerCursor({ version: 1, organizationId: org, entityId: entity, accountId: accounts.expense,
+      fromDate: ledgerQuery.fromDate, toDateExclusive: ledgerQuery.toDateExclusive, knownAt: knowledge, postingDate: "2026-01-01", journalId: midpoint.id, ordinal: midpoint.ordinal });
+    const initialQuery = { ...ledgerQuery, knownAt: knowledge }, middleQuery = { ...initialQuery, cursor: midCursor };
+    const firstSamples: number[] = [], middleSamples: number[] = [], statementSamples: number[] = [];
+    for (const [label, input, measurements, preceding, ending] of [["first", initialQuery, firstSamples, "0.00", "1.00"], ["middle", middleQuery, middleSamples, "246.50", "247.50"]] as const) {
+      for (let i = 0; i < 5; i++) await readGeneralLedger(user, org, entity, input);
+      for (let i = 0; i < 50; i++) {
+        const tick = performance.now(), page = await readGeneralLedger(user, org, entity, input); measurements.push(performance.now() - tick);
+        if (page.rows.length !== 100 || page.rows.some(row => row.debit !== "0.01" || row.credit !== "0.00") || page.page.precedingBalance !== preceding || page.page.endingBalance !== ending || !page.page.nextCursor) throw new Error(`Independent ${label} page balances/count failed`);
+        if ((i + 1) % 10 === 0) console.log(`Dense ledger ${label} page: ${i + 1}/50 reads`);
+      }
+    }
+    const statementQuery = { fromDate: "2026-01-01", toDateExclusive: "2027-01-01", knownAt: knowledge };
+    for (let i = 0; i < 5; i++) await readStatementFoundation(user, org, entity, statementQuery);
+    for (let i = 0; i < 50; i++) {
+      const tick = performance.now(), report = await readStatementFoundation(user, org, entity, statementQuery); statementSamples.push(performance.now() - tick);
+      if (report.trialBalance.totals.closing.debit !== "5010492.99" || report.trialBalance.totals.closing.credit !== "5010492.99"
+        || report.balanceSheet.assets !== "5010000.00" || report.balanceSheet.liabilities !== "10000.00"
+        || report.balanceSheet.equity !== "5000000.00" || report.balanceSheet.currentYearResult !== "4999507.01" || report.balanceSheet.difference !== "0.00") throw new Error("Independent large statement fixture ties failed");
+      if ((i + 1) % 10 === 0) console.log(`Posted statements: ${i + 1}/50 reads`);
+    }
+    const reportPlan = await withLedgerReportScope(user, org, entity, async client => (await client.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${GeneralLedgerSQL}`,
+      [org, entity, accounts.expense, ledgerQuery.fromDate, ledgerQuery.toDateExclusive, knowledge, null, null, null, 101])).rows[0]["QUERY PLAN"][0]);
+    const reportFootprint: Record<string, unknown>[] = [];
+    function collect(node: Record<string, unknown>) {
+      if (node["Relation Name"] || node["Node Type"] === "Limit") reportFootprint.push({ node: node["Node Type"], relation: node["Relation Name"], index: node["Index Name"], rows: node["Actual Rows"], loops: node["Actual Loops"] });
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) collect(child);
+    }
+    collect(reportPlan.Plan);
+    reporting = { accountLines: 49299, pageLimit: 100, ledgerFirst: { runs: 50, p95Ms: p95(firstSamples), maxMs: Number(Math.max(...firstSamples).toFixed(3)) },
+      ledgerMiddle: { runs: 50, p95Ms: p95(middleSamples), maxMs: Number(Math.max(...middleSamples).toFixed(3)), independentPrecedingBalance: "246.50" },
+      statements: { runs: 50, p95Ms: p95(statementSamples), maxMs: Number(Math.max(...statementSamples).toFixed(3)), independentTies: true },
+      targetMet: [firstSamples, middleSamples, statementSamples].every(values => p95(values) < 3000), queryPlan: { executionMs: reportPlan["Execution Time"], footprint: reportFootprint } };
+  }
   const server = (await admin.query("SHOW server_version")).rows[0].server_version;
-  console.log(JSON.stringify({ dataset: { journalLines: lineCount, openItems: ids.length, allocationEvents: 200 }, hardware: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)), node: process.version, postgres: server }, warmRead: { runs: samples.length, pageLimit: 100, p95Ms: p95(samples), maxMs: Number(Math.max(...samples).toFixed(3)), targetMet: p95(samples) < 1000 }, historicalPageRead: { runs: historySamples.length, includesHistoryTarget: true, p95Ms: p95(historySamples), targetMet: p95(historySamples) < 1000 }, applicationAndInverse: { cycles: growth.length, first25P95Ms: p95(growth.slice(0, 25)), last25P95Ms: p95(growth.slice(-25)) }, queryPlan: { executionMs: plan["Execution Time"], footprint }, totalSeconds: Number(((performance.now() - started) / 1000).toFixed(2)) }, null, 2));
+  console.log(JSON.stringify({ dataset: { journalLines: lineCount, openItems: ids.length, allocationEvents: 200 }, hardware: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)), node: process.version, postgres: server }, warmRead: { runs: samples.length, pageLimit: 100, p95Ms: p95(samples), maxMs: Number(Math.max(...samples).toFixed(3)), targetMet: p95(samples) < 1000 }, historicalPageRead: { runs: historySamples.length, includesHistoryTarget: true, p95Ms: p95(historySamples), targetMet: p95(historySamples) < 1000 }, applicationAndInverse: { cycles: growth.length, first25P95Ms: p95(growth.slice(0, 25)), last25P95Ms: p95(growth.slice(-25)) }, queryPlan: { executionMs: plan["Execution Time"], footprint }, reporting, totalSeconds: Number(((performance.now() - started) / 1000).toFixed(2)) }, null, 2));
 } finally {
   const client = await admin.connect();
   const triggers = [...["journal_reversal_hold_releases", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties"].map(table => [table, "subledger_immutable"]), ["journal_reversal_holds", "reversal_immutable"], ["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];

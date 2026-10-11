@@ -79,7 +79,8 @@ control subledgers, cash or opening-import workflows. Setup uses services/privat
 test posting primitives, not disabled guards. Cleanup removes only the unique local
 fixture and restores its append-only triggers transactionally.
 
-Before K016 acceptance: bounded general-ledger pagination and authorized drill-down;
+General-ledger pagination/source-reference evidence is recorded in ADR0017.
+Before K016 acceptance: public authorized drill-down/report journeys;
 explicit direct/operating/tax report mappings; owner aggregate-only permission path;
 concrete catalog/OpenAPI report variants with deferred types rejected; screens and
 browser journeys; actual control-source fixtures; comparative/dimension capability
