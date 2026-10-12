@@ -428,3 +428,58 @@ it("fails explicitly for deferred capabilities without revealing another entity"
   await expect(readReport(actors.site_supervisor, org, entity, { reportType: "cash-flow" })).rejects.toMatchObject({ status: 403 });
   await expect(readReport(reader, org, entity, { reportType: "profit-loss", ...interval, includeComparative: true })).rejects.toMatchObject({ code: "FEATURE_NOT_ENABLED" });
 });
+it("keeps unfiltered journal reads scoped and finance-only with statement-local authorization", async () => {
+  for (const role of ["finance_manager", "accountant", "auditor", "owner", "organization_admin", "site_supervisor"]) {
+    await withScope(actors[role], org, entity, "entity.read", async client => {
+      for (const table of ["journal_entries", "journal_lines"]) {
+        const rows = (await client.query(`SELECT organization_id,legal_entity_id FROM ${table}`)).rows;
+        expect(rows.every(row => row.organization_id === org && row.legal_entity_id === entity)).toBe(true);
+        if (["finance_manager", "accountant", "auditor"].includes(role)) expect(rows.length).toBeGreaterThan(0);
+        else expect(rows).toEqual([]);
+        const grants = (await client.query("SELECT has_table_privilege(current_user,$1,'INSERT') OR has_table_privilege(current_user,$1,'UPDATE') OR has_table_privilege(current_user,$1,'DELETE') AS writable", [table])).rows[0];
+        expect(grants.writable).toBe(false);
+      }
+    });
+  }
+});
+it("reauthorizes a reused prepared ledger query per statement, including revocation in the same transaction", async () => {
+  const client = await databasePool().connect();
+  const prepared = { name: `statement-local-rls-${randomUUID()}`, text: "SELECT (SELECT count(*)::int FROM journal_entries) AS entries,(SELECT count(*)::int FROM journal_lines) AS lines" };
+  const setScope = (actor: string, organization: string = org, company: string = entity) => client.query("SELECT set_config('app.user_id',$1,true),set_config('app.org_id',$2,true),set_config('app.entity_id',$3,true)", [actor, organization, company]);
+  try {
+    await client.query("BEGIN"); await setScope(reader);
+    expect((await client.query(prepared)).rows[0].lines).toBeGreaterThan(0);
+    await admin.query("UPDATE memberships SET active=false WHERE organization_id=$1 AND user_id=$2", [org, reader]);
+    expect((await client.query(prepared)).rows[0]).toEqual({ entries: 0, lines: 0 });
+    await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, reader]);
+    expect((await client.query(prepared)).rows[0].entries).toBeGreaterThan(0);
+    await client.query("ROLLBACK");
+    for (const [actor, organization, company] of [[actors.owner, org, entity], [reader, org, other], [reader, randomUUID(), entity], [reader, "", ""]]) {
+      await client.query("BEGIN"); await setScope(actor, organization, company);
+      expect((await client.query(prepared)).rows[0]).toEqual({ entries: 0, lines: 0 });
+      await client.query("ROLLBACK");
+    }
+    // Scope was transaction-local even though the prepared plan survived.
+    expect((await client.query(prepared)).rows[0]).toEqual({ entries: 0, lines: 0 });
+    await client.query("BEGIN"); await setScope(reader, "invalid", entity);
+    await expect(client.query(prepared)).rejects.toMatchObject({ code: "22P02" });
+  } finally {
+    await client.query("ROLLBACK"); client.release();
+    await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, reader]);
+  }
+});
+it("uses once-per-statement permission InitPlans without disabling row security", async () => {
+  await withScope(reader, org, entity, "reports.read", async client => {
+    for (const table of ["journal_entries", "journal_lines"]) {
+      const plan = (await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) SELECT count(*) FROM ${table}`)).rows[0]["QUERY PLAN"][0];
+      const guards: Record<string, unknown>[] = [];
+      function collect(node: Record<string, unknown>) {
+        if (String(node["Subplan Name"] ?? "").startsWith("InitPlan")) guards.push(node);
+        for (const child of (node.Plans ?? []) as Record<string, unknown>[]) collect(child);
+      }
+      collect(plan.Plan); expect(guards).toHaveLength(2);
+      expect(guards.every(node => node["Actual Loops"] === 1)).toBe(true);
+      expect((await client.query("SHOW row_security")).rows[0].row_security).toBe("on");
+    }
+  });
+});

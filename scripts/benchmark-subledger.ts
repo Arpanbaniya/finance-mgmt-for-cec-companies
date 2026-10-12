@@ -14,6 +14,11 @@ import { GeneralLedgerSQL, readGeneralLedger } from "../features/reporting/gener
 import { readStatementFoundation } from "../features/reporting/statement-service";
 import { withLedgerReportScope } from "../features/reporting/scope";
 import { encodeLedgerCursor } from "../features/reporting/ledger-cursor";
+import { StatementAggregatesSQL } from "../features/reporting/statement-service";
+import { readReport } from "../features/reporting/report-service";
+import { parseReportQuery } from "../features/reporting/report-query";
+import type { ReportResultValue } from "../features/reporting/report-contracts";
+import assert from "node:assert/strict";
 
 config({ path: ".env.local", quiet: true });
 for (const name of ["MIGRATION_DATABASE_URL", "DATABASE_URL"]) {
@@ -21,7 +26,7 @@ for (const name of ["MIGRATION_DATABASE_URL", "DATABASE_URL"]) {
   try { url = new URL(process.env[name] ?? ""); } catch { throw new Error(`${name} must be configured privately for the dedicated local database.`); }
   if (url.hostname !== "127.0.0.1" || url.port !== "55432" || url.pathname !== "/kaamledger") throw new Error("Benchmark writes require the dedicated local database on port 55432; hosted databases are forbidden.");
 }
-const org = randomUUID(), entity = randomUUID(), party = randomUUID(), user = `subledger-benchmark-${randomUUID()}`;
+const org = randomUUID(), entity = randomUUID(), party = randomUUID(), user = `subledger-benchmark-${randomUUID()}`, owner = `report-owner-${randomUUID()}`;
 const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
 const accounts: Record<string, string> = {}, samples: number[] = [], historySamples: number[] = [], growth: number[] = [];
 const query = { asOfDate: "2026-12-31", knownAt: "9999-12-31T23:59:59.999999Z", limit: 100 };
@@ -38,13 +43,19 @@ const day = (offset: number) => new Date(Date.UTC(2026, 0, 15 + offset)).toISOSt
 const p95 = (values: number[]) => Number([...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1].toFixed(3));
 const started = performance.now();
 const includeReports = process.argv.includes("--reports");
+const publicReports = process.argv.includes("--public-reports");
+const planOnly = process.argv.includes("--report-plan-only");
 try {
   await admin.query("INSERT INTO auth_user(id,name,email,email_verified,created_at,updated_at) VALUES($1,'Local subledger benchmark',$2,true,now(),now())", [user, `${user}@example.invalid`]);
   await admin.query("INSERT INTO organizations(id,name) VALUES($1,'Local subledger benchmark')", [org]);
   await admin.query("INSERT INTO legal_entities(id,organization_id,name,active_modes,reporting_profile,created_by) VALUES($1,$2,'Synthetic benchmark company','[\"labour\"]','demo_accrual',$3)", [entity, org, user]);
   await admin.query("INSERT INTO memberships(id,organization_id,user_id,roles,allowed_entity_ids,site_ids) VALUES($1,$2,$3,'[\"finance_manager\"]',$4,'[]')", [randomUUID(), org, user, JSON.stringify([entity])]);
+  if (publicReports || planOnly) {
+    await admin.query("INSERT INTO auth_user(id,name,email,email_verified,created_at,updated_at) VALUES($1,'Local report owner',$2,true,now(),now())", [owner, `${owner}@example.invalid`]);
+    await admin.query("INSERT INTO memberships(id,organization_id,user_id,roles,allowed_entity_ids,site_ids) VALUES($1,$2,$3,'[\"owner\"]',$4,'[]')", [randomUUID(), org, owner, JSON.stringify([entity])]);
+  }
   for (const [code, type, control] of [["ar", "asset", "ar"], ["deposit", "liability", "customer_deposits"], ["cash", "asset", "cash"], ["revenue", "revenue", null], ["expense", "expense", null], ["equity", "equity", null]] as const) {
-    const account = await createAccount(user, org, entity, { code, name: code, type, normalSide: type === "asset" || type === "expense" ? "debit" : "credit", isControl: control !== null, controlType: control, reportMapping: { statementSection: type === "asset" ? "assets" : type === "liability" ? "liabilities" : type === "equity" ? "equity" : type === "revenue" ? "revenue" : "expenses", cashFlowCategory: control === "cash" ? "cash" : "unclassified" } }, randomUUID(), randomUUID()); accounts[code] = account.id;
+    const account = await createAccount(user, org, entity, { code, name: code, type, normalSide: type === "asset" || type === "expense" ? "debit" : "credit", isControl: control !== null, controlType: control, reportMapping: { statementSection: type === "asset" ? "assets" : type === "liability" ? "liabilities" : type === "equity" ? "equity" : type === "revenue" ? "revenue" : "expenses", cashFlowCategory: control === "cash" ? "cash" : "unclassified", profitLossCategory: type === "revenue" ? "revenue" : type === "expense" ? "operating_expense" : "not_applicable", costBehavior: type === "expense" ? "fixed" : "not_applicable" } }, randomUUID(), randomUUID()); accounts[code] = account.id;
   }
   await createFiscalYear(user, org, entity, { fiscalYearLabel: "Synthetic benchmark year", retainedEarningsAccountId: accounts.equity, periods: [{ startDate: "2026-01-01", endDateExclusive: "2027-01-01" }] }, randomUUID(), randomUUID());
   await internal(client => client.query("INSERT INTO subledger_counterparties VALUES($1,$2,$3,$4)", [org, entity, party, user]));
@@ -98,6 +109,62 @@ try {
     for (const child of (node.Plans ?? []) as Record<string, unknown>[]) visit(child);
   }
   visit(plan.Plan);
+  let publicReporting: Record<string, unknown> | undefined;
+  if (publicReports || planOnly) {
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM journal_lines WHERE organization_id=$1 AND legal_entity_id=$2", [org, entity])).rows[0].n, 100000);
+    const interval = { fromDate: "2026-01-01", toDateExclusive: "2027-01-01" };
+    const financePlan = await withLedgerReportScope(user, org, entity, async client => (await client.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${StatementAggregatesSQL}`, [org, entity, interval.fromDate, interval.toDateExclusive, null])).rows[0]["QUERY PLAN"][0]);
+    const financeFootprint: Record<string, unknown>[] = [];
+    function collectPlan(node: Record<string, unknown>) {
+      if (node["Relation Name"] || node["Node Type"] === "Limit" || node["Subplan Name"]) financeFootprint.push({ node: node["Node Type"], subplan: node["Subplan Name"], relation: node["Relation Name"], index: node["Index Name"], rows: node["Actual Rows"], loops: node["Actual Loops"], filter: node.Filter });
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) collectPlan(child);
+    }
+    collectPlan(financePlan.Plan);
+    console.log(JSON.stringify({ financeStatementPlan: { executionMs: financePlan["Execution Time"], footprint: financeFootprint } }, null, 2));
+    if (!planOnly) {
+      const first = await readGeneralLedger(user, org, entity, { accountId: accounts.expense, ...interval, limit: 100 }), knownAt = first.metadata.knownAt;
+      const midpoint = (await admin.query("SELECT j.id,l.ordinal FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id WHERE l.organization_id=$1 AND l.legal_entity_id=$2 AND l.account_id=$3 ORDER BY j.posting_date,j.id,l.ordinal OFFSET 24649 LIMIT 1", [org, entity, accounts.expense])).rows[0];
+      const middle = encodeLedgerCursor({ version: 1, organizationId: org, entityId: entity, accountId: accounts.expense, ...interval, knownAt, postingDate: "2026-01-01", journalId: midpoint.id, ordinal: midpoint.ordinal });
+      const measurements: Record<string, unknown> = {};
+      const readPublic = async (actor: string, type: string, fields: Record<string, string | undefined>) => readReport(actor, org, entity, parseReportQuery(type,
+        new URLSearchParams(Object.entries(fields).filter((entry): entry is [string, string] => entry[1] !== undefined))));
+      const verify = (report: ReportResultValue, label: string) => {
+        assert.equal(report.metadata.knownAt, knownAt);
+        if (report.reportType === "profit-loss") {
+          assert.equal(report.totals.operatingRevenue, "5000000.00"); assert.equal(report.totals.operatingExpenses, "492.99");
+          assert.equal(report.totals.grossProfit, "5000000.00"); assert.equal(report.totals.contributionMargin, "5000000.00"); assert.equal(report.totals.netProfit, "4999507.01");
+          assert.equal(report.totals.mappingComplete, true); assert.equal(report.totals.contributionMappingComplete, true);
+        } else if (report.reportType === "balance-sheet") {
+          assert.deepEqual(report.totals, { assets: "5010000.00", liabilities: "10000.00", postedEquity: "492.99", currentYearResult: "4999507.01", priorUnclosedResult: "0.00", equity: "5000000.00", difference: "0.00" });
+        } else if (report.reportType === "trial-balance") {
+          assert.equal(report.rows.length, 6); assert.equal(report.page.totalRows, 6); assert.equal(report.page.nextCursor, null); assert.deepEqual(report.totals.closing, { debit: "5010492.99", credit: "5010492.99" });
+        } else {
+          assert.equal(report.rows.length, 100); assert.equal(report.totals.lineCount, "49299"); assert.equal(report.totals.closingBalance, "492.99");
+          assert.equal(report.page.precedingBalance, label === "ledgerMiddle" ? "246.50" : "0.00"); assert.equal(report.page.endingBalance, label === "ledgerMiddle" ? "247.50" : "1.00");
+          assert.ok(report.page.nextCursor); assert.ok(report.rows.every(row => row.debit === "0.01" && row.credit === "0.00"));
+        }
+        if (report.view === "owner") for (const id of Object.values(accounts)) assert.ok(!JSON.stringify(report).includes(id));
+      };
+      const cases = [
+        { label: "ledgerFirst", actor: user, type: "general-ledger", fields: { ...interval, knownAt, accountId: accounts.expense, limit: "100" } },
+        { label: "ledgerMiddle", actor: user, type: "general-ledger", fields: { ...interval, knownAt, accountId: accounts.expense, limit: "100", cursor: middle } },
+        { label: "trialBalance", actor: user, type: "trial-balance", fields: { ...interval, knownAt, limit: "100" } },
+        ...[user, owner].flatMap(actor => [{ label: actor === user ? "financeProfitLoss" : "ownerProfitLoss", actor, type: "profit-loss", fields: { ...interval, knownAt } },
+          { label: actor === user ? "financeBalanceSheet" : "ownerBalanceSheet", actor, type: "balance-sheet", fields: { asOfDate: "2026-12-31", knownAt } }]),
+      ];
+      for (const entry of cases) {
+        for (let i = 0; i < 5; i++) verify(await readPublic(entry.actor, entry.type, entry.fields), entry.label);
+        const times: number[] = [];
+        for (let i = 0; i < 50; i++) {
+          const tick = performance.now(), report = await readPublic(entry.actor, entry.type, entry.fields); times.push(performance.now() - tick); verify(report, entry.label);
+          if ((i + 1) % 10 === 0) console.log(`Public ${entry.label}: ${i + 1}/50 authorized reads`);
+        }
+        measurements[entry.label] = { runs: 50, p95Ms: p95(times), maxMs: Number(Math.max(...times).toFixed(3)), targetMet: p95(times) < 3000 };
+        console.log(JSON.stringify({ report: entry.label, ...measurements[entry.label] as Record<string, unknown> }));
+      }
+      publicReporting = { measurements, independentTies: true, adapter: "strict URL query plus authorized readReport; excludes HTTP/session/render latency", financeStatementPlan: { executionMs: financePlan["Execution Time"], footprint: financeFootprint } };
+    }
+  }
   let reporting: Record<string, unknown> | undefined;
   if (includeReports) {
     const ledgerQuery = { accountId: accounts.expense, fromDate: "2026-01-01", toDateExclusive: "2026-01-02", limit: 100 };
@@ -140,7 +207,7 @@ try {
       targetMet: [firstSamples, middleSamples, statementSamples].every(values => p95(values) < 3000), queryPlan: { executionMs: reportPlan["Execution Time"], footprint: reportFootprint } };
   }
   const server = (await admin.query("SHOW server_version")).rows[0].server_version;
-  console.log(JSON.stringify({ dataset: { journalLines: lineCount, openItems: ids.length, allocationEvents: 200 }, hardware: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)), node: process.version, postgres: server }, warmRead: { runs: samples.length, pageLimit: 100, p95Ms: p95(samples), maxMs: Number(Math.max(...samples).toFixed(3)), targetMet: p95(samples) < 1000 }, historicalPageRead: { runs: historySamples.length, includesHistoryTarget: true, p95Ms: p95(historySamples), targetMet: p95(historySamples) < 1000 }, applicationAndInverse: { cycles: growth.length, first25P95Ms: p95(growth.slice(0, 25)), last25P95Ms: p95(growth.slice(-25)) }, queryPlan: { executionMs: plan["Execution Time"], footprint }, reporting, totalSeconds: Number(((performance.now() - started) / 1000).toFixed(2)) }, null, 2));
+  console.log(JSON.stringify({ dataset: { journalLines: lineCount, openItems: ids.length, allocationEvents: 200 }, hardware: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)), node: process.version, postgres: server }, warmRead: { runs: samples.length, pageLimit: 100, p95Ms: p95(samples), maxMs: Number(Math.max(...samples).toFixed(3)), targetMet: p95(samples) < 1000 }, historicalPageRead: { runs: historySamples.length, includesHistoryTarget: true, p95Ms: p95(historySamples), targetMet: p95(historySamples) < 1000 }, applicationAndInverse: { cycles: growth.length, first25P95Ms: p95(growth.slice(0, 25)), last25P95Ms: p95(growth.slice(-25)) }, queryPlan: { executionMs: plan["Execution Time"], footprint }, reporting, publicReporting, totalSeconds: Number(((performance.now() - started) / 1000).toFixed(2)) }, null, 2));
 } finally {
   const client = await admin.connect();
   const triggers = [...["journal_reversal_hold_releases", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties"].map(table => [table, "subledger_immutable"]), ["journal_reversal_holds", "reversal_immutable"], ["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];
@@ -150,7 +217,7 @@ try {
     if (fixture.rowCount && fixture.rows[0].name !== "Local subledger benchmark") throw new Error("Benchmark cleanup identity changed");
     for (const [table, trigger] of triggers) await client.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
     for (const table of ["journal_reversal_hold_releases", "journal_reversal_holds", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties", "journal_lines", "journal_entries", "document_numbers", "document_series", "fiscal_periods", "fiscal_years", "account_versions", "accounts", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
-    await client.query("DELETE FROM organizations WHERE id=$1", [org]); await client.query("DELETE FROM auth_user WHERE id=$1", [user]);
+    await client.query("DELETE FROM organizations WHERE id=$1", [org]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [[user, owner]]);
     await client.query("SET CONSTRAINTS ALL IMMEDIATE");
     for (const [table, trigger] of triggers) await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
     await client.query("COMMIT"); console.log("Removed only this run's synthetic fixture; append-only guards restored. No reset or hosted data access.");

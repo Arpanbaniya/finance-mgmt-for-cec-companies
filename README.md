@@ -62,6 +62,24 @@ Reversal dates and inverse lines are fixed. You may edit the description and sav
 
 The account picker contains eligible accounts from the first hundred chart entries. Branch dimensions supplied through the API must belong to the same company; existing branches are retained when editing. Other dimension types remain unavailable until their scoped masters are implemented.
 
+### Financial reports
+
+Open **Financial reports** on a company card. Select profit and loss, balance
+sheet, trial balance or an account general ledger. Supply start and exclusive
+end dates for interval reports, or an inclusive as-of date for the balance sheet.
+Configure the fiscal calendar containing the as-of date first.
+
+Owners receive aggregate profit/loss and balance-sheet summaries. Raw trial
+balance and general ledger require finance read access. Trial-balance account
+links open the ledger at the same dates and knowledge cutoff; eligible manual
+source links lead to their independently authorized journal and approval details.
+
+**Run report** captures fresh knowledge. **Replay this cutoff** and pagination
+retain the displayed history. Missing consumed classifications make affected
+profit subtotals **Unavailable**, not zero. Comparative and dimensional reports
+are not enabled. These temporal reports are not approved close snapshots or
+statutory filings.
+
 ### Notification delivery
 
 Activation commits a durable event alongside the policy change. An operator runs an explicit scoped batch with restricted runtime credentials:
