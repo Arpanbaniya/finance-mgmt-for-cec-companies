@@ -7173,11 +7173,37 @@
                   "financing",
                   "cash"
                 ]
+              },
+              "profitLossCategory": {
+                "default": "unclassified",
+                "type": "string",
+                "enum": [
+                  "unclassified",
+                  "not_applicable",
+                  "revenue",
+                  "direct_cost",
+                  "operating_expense",
+                  "other_income",
+                  "finance_cost",
+                  "income_tax"
+                ]
+              },
+              "costBehavior": {
+                "default": "unclassified",
+                "type": "string",
+                "enum": [
+                  "unclassified",
+                  "not_applicable",
+                  "fixed",
+                  "variable"
+                ]
               }
             },
             "required": [
               "statementSection",
-              "cashFlowCategory"
+              "cashFlowCategory",
+              "profitLossCategory",
+              "costBehavior"
             ],
             "additionalProperties": false
           }
@@ -7236,6 +7262,28 @@
                   "investing",
                   "financing",
                   "cash"
+                ]
+              },
+              "profitLossCategory": {
+                "type": "string",
+                "enum": [
+                  "unclassified",
+                  "not_applicable",
+                  "revenue",
+                  "direct_cost",
+                  "operating_expense",
+                  "other_income",
+                  "finance_cost",
+                  "income_tax"
+                ]
+              },
+              "costBehavior": {
+                "type": "string",
+                "enum": [
+                  "unclassified",
+                  "not_applicable",
+                  "fixed",
+                  "variable"
                 ]
               }
             },
@@ -9253,11 +9301,37 @@
                       "financing",
                       "cash"
                     ]
+                  },
+                  "profitLossCategory": {
+                    "default": "unclassified",
+                    "type": "string",
+                    "enum": [
+                      "unclassified",
+                      "not_applicable",
+                      "revenue",
+                      "direct_cost",
+                      "operating_expense",
+                      "other_income",
+                      "finance_cost",
+                      "income_tax"
+                    ]
+                  },
+                  "costBehavior": {
+                    "default": "unclassified",
+                    "type": "string",
+                    "enum": [
+                      "unclassified",
+                      "not_applicable",
+                      "fixed",
+                      "variable"
+                    ]
                   }
                 },
                 "required": [
                   "statementSection",
-                  "cashFlowCategory"
+                  "cashFlowCategory",
+                  "profitLossCategory",
+                  "costBehavior"
                 ],
                 "additionalProperties": false
               },
@@ -9485,11 +9559,37 @@
                         "financing",
                         "cash"
                       ]
+                    },
+                    "profitLossCategory": {
+                      "default": "unclassified",
+                      "type": "string",
+                      "enum": [
+                        "unclassified",
+                        "not_applicable",
+                        "revenue",
+                        "direct_cost",
+                        "operating_expense",
+                        "other_income",
+                        "finance_cost",
+                        "income_tax"
+                      ]
+                    },
+                    "costBehavior": {
+                      "default": "unclassified",
+                      "type": "string",
+                      "enum": [
+                        "unclassified",
+                        "not_applicable",
+                        "fixed",
+                        "variable"
+                      ]
                     }
                   },
                   "required": [
                     "statementSection",
-                    "cashFlowCategory"
+                    "cashFlowCategory",
+                    "profitLossCategory",
+                    "costBehavior"
                   ],
                   "additionalProperties": false
                 },

@@ -234,3 +234,23 @@ it("retains the microsecond inclusion boundary and rechecks revoked access on cu
   try { await expect(readGeneralLedger(reader, org, entity, { ...base, limit: 1, cursor: first.page.nextCursor! })).rejects.toMatchObject({ status: 404 }); }
   finally { await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, reader]); }
 });
+it("keeps legacy posted categories incomplete after later chart classification", async () => {
+  const before = await read(), retained = (await admin.query("SELECT snapshot FROM account_versions WHERE account_id=$1 AND version=1", [accounts.WAGES])).rows[0].snapshot;
+  expect(before.profitLoss).toMatchObject({ mappingComplete: false, netProfit: null, unclassifiedExpenses: "22700.00" });
+  await patchAccount(finance, org, entity, accounts.WAGES, { reportMapping: { statementSection: "expenses", cashFlowCategory: "unclassified", profitLossCategory: "direct_cost", costBehavior: "variable" } }, 1, randomUUID());
+  await patchAccount(finance, org, entity, accounts.REVENUE, { reportMapping: { statementSection: "revenue", cashFlowCategory: "unclassified", profitLossCategory: "revenue" } }, 1, randomUUID());
+  expect((await read()).profitLoss).toEqual(before.profitLoss);
+  expect((await admin.query("SELECT snapshot FROM account_versions WHERE account_id=$1 AND version=1", [accounts.WAGES])).rows[0].snapshot).toEqual(retained);
+});
+it("reads classified P&L from consumed versions, pins replay and does not retag old direct costs", async () => {
+  await post("2026-06-03", [{ accountId: accounts.WAGES, accountVersion: 2, debit: "10.00", credit: "0.00" }, { accountId: accounts.REVENUE, accountVersion: 2, debit: "0.00", credit: "10.00" }]);
+  const june = { fromDate: "2026-06-01", toDateExclusive: "2026-07-01" }, before = await read(june);
+  expect(before.profitLoss).toMatchObject({ mappingComplete: true, operatingRevenue: "10.00", directCosts: "10.00", grossProfit: "0.00", contributionMargin: "0.00", netProfit: "0.00" });
+  await patchAccount(finance, org, entity, accounts.WAGES, { reportMapping: { statementSection: "expenses", cashFlowCategory: "unclassified", profitLossCategory: "operating_expense", costBehavior: "fixed" } }, 2, randomUUID());
+  expect((await read(june)).profitLoss).toEqual(before.profitLoss);
+  await post("2026-06-04", [{ accountId: accounts.WAGES, accountVersion: 3, debit: "5.00", credit: "0.00" }, { accountId: accounts.REVENUE, accountVersion: 2, debit: "0.00", credit: "5.00" }]);
+  const current = await read(june);
+  expect(current.profitLoss).toMatchObject({ operatingRevenue: "15.00", directCosts: "10.00", operatingExpenses: "5.00", grossProfit: "5.00", contributionMargin: "5.00", operatingProfit: "0.00", profitBeforeTax: "0.00", netProfit: "0.00" });
+  expect(current.incomeMovement.result).toBe("0.00"); expect(current.balanceSheet.difference).toBe("0.00");
+  expect((await read({ ...june, knownAt: before.metadata.knownAt })).profitLoss).toEqual(before.profitLoss);
+});

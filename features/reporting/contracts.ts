@@ -10,8 +10,13 @@ export const StatementMetadata = z.strictObject({ organizationId: z.uuid(), enti
   fiscalYearId: z.uuid(), fiscalYearStart: CalendarDate, fiscalYearEndExclusive: CalendarDate,
   retainedEarningsAccountId: z.uuid(), retainedEarningsAccountVersion: z.number().int().positive(),
   reportingProfile: z.enum(["demo_accrual", "review_required"]), policyStatus: z.enum(["demo", "review_required"]),
-  reportVersion: z.literal("statement-foundation-v1"), mappingBasis: z.literal("posted-account-versions"),
+  reportVersion: z.literal("statement-foundation-v2"), mappingBasis: z.literal("posted-account-versions"),
 });
+const MappingWitness = z.strictObject({ accountId: z.uuid(), accountVersion: z.number().int().positive(), code: z.string().min(1).max(100), name: z.string().min(1).max(200) });
+export const ProfitLossResult = z.strictObject({ mappingComplete: z.boolean(), operatingRevenue: SignedStatementAmount, directCosts: SignedStatementAmount, operatingExpenses: SignedStatementAmount,
+  otherIncome: SignedStatementAmount, financeCosts: SignedStatementAmount, incomeTaxExpense: SignedStatementAmount, unclassifiedRevenue: SignedStatementAmount, unclassifiedExpenses: SignedStatementAmount,
+  grossProfit: SignedStatementAmount.nullable(), contributionMargin: SignedStatementAmount.nullable(), operatingProfit: SignedStatementAmount.nullable(), profitBeforeTax: SignedStatementAmount.nullable(), netProfit: SignedStatementAmount.nullable(),
+  unclassifiedAccounts: z.array(MappingWitness).max(10000), missingCostBehavior: z.array(MappingWitness).max(10000) });
 export const GeneralLedgerMetadata = StatementMetadata.extend({ reportVersion: z.literal("general-ledger-v1"), accountId: z.uuid(),
   balanceConvention: z.literal("debit-positive"), watermarkScope: z.literal("selected-account"),
 });

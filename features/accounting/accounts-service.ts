@@ -13,7 +13,7 @@ import { isParentCandidate } from "@/domain/accounts";
 function dto(row: Record<string, unknown>) {
   return AccountDTO.parse({ id: row.id, organizationId: row.organization_id, entityId: row.legal_entity_id, code: row.code, name: row.name,
     type: row.type, normalSide: row.normal_side, parentId: row.parent_id, isControl: row.is_control, controlType: row.control_type,
-    reportMapping: { statementSection: row.report_section, cashFlowCategory: row.cash_flow_category }, active: row.active, version: row.version,
+    reportMapping: { statementSection: row.report_section, cashFlowCategory: row.cash_flow_category, profitLossCategory: row.profit_loss_category, costBehavior: row.cost_behavior }, active: row.active, version: row.version,
     createdBy: row.created_by, createdAt: (row.created_at as Date).toISOString(), updatedBy: row.updated_by, updatedAt: (row.updated_at as Date).toISOString(),
     archivedBy: row.archived_by, archivedAt: row.archived_at ? (row.archived_at as Date).toISOString() : null, archiveReason: row.archive_reason });
 }
@@ -53,22 +53,22 @@ export async function createAccount(user: string, org: string, entity: string, i
     const prior = await replay(client, org, user, operation, key, hash); if (prior) return AccountDTO.parse(prior);
     await validateParent(client, org, entity, command);
     const id = randomUUID();
-    const rows = await client.query(`INSERT INTO accounts(id,organization_id,legal_entity_id,code,name,type,normal_side,parent_id,is_control,control_type,report_section,cash_flow_category,created_by,updated_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING *`, [id, org, entity, command.code, command.name, command.type, command.normalSide, command.parentId, command.isControl, command.controlType, command.reportMapping.statementSection, command.reportMapping.cashFlowCategory, user]);
+    const rows = await client.query(`INSERT INTO accounts(id,organization_id,legal_entity_id,code,name,type,normal_side,parent_id,is_control,control_type,report_section,cash_flow_category,profit_loss_category,cost_behavior,created_by,updated_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15) RETURNING *`, [id, org, entity, command.code, command.name, command.type, command.normalSide, command.parentId, command.isControl, command.controlType, command.reportMapping.statementSection, command.reportMapping.cashFlowCategory, command.reportMapping.profitLossCategory, command.reportMapping.costBehavior, user]);
     const response = dto(rows.rows[0]); await audit(client, org, user, "account.create", id, requestId, entity);
     await remember(client, org, user, operation, key, hash, id, response); return response;
   });
 }
-export async function patchAccount(user: string, org: string, entity: string, id: string, input: z.infer<typeof AccountPatch>, version: number, requestId: string) {
+export async function patchAccount(user: string, org: string, entity: string, id: string, input: z.input<typeof AccountPatch>, version: number, requestId: string) {
   const patch = AccountPatch.parse(input);
   return withScope(user, org, entity, "accounts.update", async client => {
     await authorizeWrite(client, org, entity); const old = dto(await selected(client, org, entity, id, true));
     if (old.version !== version) throw new DomainError("STALE_VERSION", "Reload the current account before editing.", 412);
     if (!old.active) throw new DomainError("ACCOUNT_ARCHIVED", "Archived accounts are immutable.", 409);
     const next = AccountCreate.parse({ code: old.code, name: patch.name ?? old.name, type: old.type, normalSide: old.normalSide, parentId: patch.parentId === undefined ? old.parentId : patch.parentId,
-      isControl: old.isControl, controlType: old.controlType, reportMapping: patch.reportMapping ?? old.reportMapping });
+      isControl: old.isControl, controlType: old.controlType, reportMapping: { ...old.reportMapping, ...patch.reportMapping } });
     await validateParent(client, org, entity, next, id);
-    const rows = await client.query("UPDATE accounts SET name=$2,parent_id=$3,report_section=$4,cash_flow_category=$5,version=version+1,updated_by=$6 WHERE id=$1 RETURNING *", [id, next.name, next.parentId, next.reportMapping.statementSection, next.reportMapping.cashFlowCategory, user]);
+    const rows = await client.query("UPDATE accounts SET name=$2,parent_id=$3,report_section=$4,cash_flow_category=$5,profit_loss_category=$6,cost_behavior=$7,version=version+1,updated_by=$8 WHERE id=$1 RETURNING *", [id, next.name, next.parentId, next.reportMapping.statementSection, next.reportMapping.cashFlowCategory, next.reportMapping.profitLossCategory, next.reportMapping.costBehavior, user]);
     await audit(client, org, user, "account.update", id, requestId, entity); return dto(rows.rows[0]);
   });
 }

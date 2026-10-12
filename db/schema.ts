@@ -44,6 +44,7 @@ export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
   code: text("code").notNull(), name: text("name").notNull(), type: text("type").notNull(), normalSide: text("normal_side").notNull(), parentId: uuid("parent_id"),
   isControl: boolean("is_control").notNull(), controlType: text("control_type"), reportSection: text("report_section").notNull(), cashFlowCategory: text("cash_flow_category").notNull(),
+  profitLossCategory: text("profit_loss_category").notNull().default("unclassified"), costBehavior: text("cost_behavior").notNull().default("unclassified"),
   active: boolean("active").notNull().default(true), version: integer("version").notNull().default(1),
   createdBy: text("created_by").notNull().references(() => user.id), updatedBy: text("updated_by").notNull().references(() => user.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

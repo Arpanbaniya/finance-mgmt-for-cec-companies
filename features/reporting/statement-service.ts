@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AccountMovement, calculateStatements, StatementInterval } from "@/domain/statements";
 import { DomainError } from "@/domain/errors";
 import { withLedgerReportScope } from "./scope";
-import { StatementMetadata } from "./contracts";
+import { StatementMetadata, ProfitLossResult } from "./contracts";
 
 // One scoped aggregate scan; money stays numeric in PostgreSQL and strings at
 // the boundary. No raw journal payload, actor or private dimension is returned.
@@ -29,6 +29,7 @@ WITH cutoff AS MATERIALIZED (
   SELECT jsonb_build_object('accountId',a.account_id,'accountVersion',a.account_version,
     'code',v.snapshot->>'code','name',v.snapshot->>'name','type',v.snapshot->>'type',
     'normalSide',v.snapshot->>'normal_side','statementSection',v.snapshot->>'report_section',
+    'profitLossCategory',coalesce(v.snapshot->>'profit_loss_category','unclassified'),'costBehavior',coalesce(v.snapshot->>'cost_behavior','unclassified'),
     'openingDebit',a.opening_debit,'openingCredit',a.opening_credit,'periodDebit',a.period_debit,'periodCredit',a.period_credit,
     'yearDebit',a.year_debit,'yearCredit',a.year_credit) AS row
   FROM aggregate_rows a JOIN account_versions v ON v.organization_id=$1 AND v.legal_entity_id=$2
@@ -45,7 +46,7 @@ SELECT coalesce((SELECT jsonb_agg(row) FROM retained),'[]'::jsonb) AS rows,
     'fiscalYearEndExclusive',to_char(y.end_date_exclusive,'YYYY-MM-DD'),
     'retainedEarningsAccountId',y.retained_earnings_account_id,'retainedEarningsAccountVersion',y.retained_earnings_account_version,
     'reportingProfile',e.reporting_profile,'policyStatus',e.policy_status,
-    'reportVersion','statement-foundation-v1','mappingBasis','posted-account-versions') AS metadata,
+    'reportVersion','statement-foundation-v2','mappingBasis','posted-account-versions') AS metadata,
   c.known_at>c.generated_at AS future_cutoff,
   (SELECT count(*) FROM aggregate_rows) AS aggregate_count,
   (SELECT count(*) FROM retained) AS retained_count
@@ -66,8 +67,10 @@ export async function readStatementFoundation(userId: string, organizationId: st
     const movements = z.array(AccountMovement).max(10000).parse(row.rows.map((movement: Record<string, unknown>) => ({ ...movement,
       ...Object.fromEntries(["openingDebit", "openingCredit", "periodDebit", "periodCredit", "yearDebit", "yearCredit"].map(key => [key, movement[key] === "0" ? "0.00" : movement[key]])),
     })));
-    return { metadata: StatementMetadata.parse(row.metadata), ...calculateStatements(movements),
-      limitations: ["Income-tax/direct-cost classifications and comparative reporting are not implemented.",
+    const calculated = calculateStatements(movements);
+    return { metadata: StatementMetadata.parse(row.metadata), ...calculated, profitLoss: ProfitLossResult.parse(calculated.profitLoss),
+      limitations: ["P&L uses consumed account categories; missing categories or cost behavior make affected subtotals unavailable. Comparative reporting remains pending.",
+        "Income-tax expense is recorded ledger movement, not a computed tax liability or statutory return.",
         "Prior unclosed results are presented separately, not silently transferred to retained earnings.",
         "This temporal read is not an approved durable close snapshot or year-close workflow.",
         "Public report contracts, owner-only aggregates and report screens remain pending."] };

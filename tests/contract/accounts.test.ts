@@ -25,3 +25,11 @@ it("five catalog account operations have specific schemas and correct create/upd
   expect(archive.responses["200"].headers.ETag).toBeDefined(); expect(archive.responses["201"]).toBeUndefined();
   expect(archive.parameters.filter(p => ["If-Match", "Idempotency-Key"].includes(p.name)).every(p => p.required)).toBe(true);
 });
+it("P&L choices are finite, type-compatible and never inferred from account names", () => {
+  expect(AccountCreate.parse(ordinary).reportMapping).toMatchObject({ profitLossCategory: "unclassified", costBehavior: "unclassified" });
+  expect(AccountCreate.parse({ ...ordinary, reportMapping: { ...ordinary.reportMapping, profitLossCategory: "direct_cost", costBehavior: "variable" } }).reportMapping.costBehavior).toBe("variable");
+  for (const mapping of [{ profitLossCategory: "revenue" }, { profitLossCategory: "wages" }, { profitLossCategory: "income_tax", costBehavior: "variable" }, { profitLossCategory: "direct_cost", costBehavior: "sometimes" }]) {
+    expect(AccountCreate.safeParse({ ...ordinary, reportMapping: { ...ordinary.reportMapping, ...mapping } }).success).toBe(false);
+  }
+  expect(AccountPatch.parse({ reportMapping: ordinary.reportMapping }).reportMapping).not.toHaveProperty("profitLossCategory");
+});

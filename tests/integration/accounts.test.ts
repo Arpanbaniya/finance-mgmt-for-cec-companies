@@ -20,6 +20,24 @@ beforeAll(async () => {
   for (const [user, role] of [[finance, "finance_manager"], [auditor, "auditor"], [administrator, "organization_admin"]]) await admin.query("INSERT INTO memberships(id,organization_id,user_id,roles,allowed_entity_ids,site_ids) VALUES($1,$2,$3,$4,$5,'[]')", [randomUUID(), org, user, JSON.stringify([role]), JSON.stringify([entity, secondEntity])]);
   await admin.query("INSERT INTO memberships(id,organization_id,user_id,roles,allowed_entity_ids,site_ids) VALUES($1,$2,$3,'[\"finance_manager\"]',$4,'[]')", [randomUUID(), foreignOrg, outsider, JSON.stringify([foreignEntity])]);
 });
+it("persists explicit report mapping versions and preserves omitted P&L choices on legacy mapping edits", async () => {
+  const account = await createAccount(finance, org, entity, { ...input("DIRECT-COST"), type: "expense", reportMapping: { statementSection: "expenses", cashFlowCategory: "operating", profitLossCategory: "direct_cost", costBehavior: "variable" } }, randomUUID(), randomUUID());
+  expect((await getAccount(auditor, org, entity, account.id)).reportMapping).toMatchObject({ profitLossCategory: "direct_cost", costBehavior: "variable" });
+  const edited = await patchAccount(finance, org, entity, account.id, { reportMapping: { statementSection: "expenses", cashFlowCategory: "unclassified" } }, 1, randomUUID());
+  expect(edited.reportMapping).toMatchObject({ profitLossCategory: "direct_cost", costBehavior: "variable" });
+  const next = await patchAccount(finance, org, entity, account.id, { reportMapping: { statementSection: "expenses", cashFlowCategory: "operating", profitLossCategory: "operating_expense", costBehavior: "fixed" } }, 2, randomUUID());
+  expect(next.version).toBe(3);
+  const versions = (await admin.query("SELECT version,snapshot->>'profit_loss_category' AS category,snapshot->>'cost_behavior' AS behavior FROM account_versions WHERE account_id=$1 ORDER BY version", [account.id])).rows;
+  expect(versions).toEqual([{ version: 1, category: "direct_cost", behavior: "variable" }, { version: 2, category: "direct_cost", behavior: "variable" }, { version: 3, category: "operating_expense", behavior: "fixed" }]);
+});
+it("restricted direct SQL rejects incompatible P&L categories, invalid behavior and unversioned edits", async () => {
+  const account = await create("MAPPING-GUARD");
+  for (const change of ["profit_loss_category='income_tax'", "cost_behavior='variable'", "profit_loss_category='arbitrary'", "cost_behavior='arbitrary'"]) {
+    await expect(withScope(finance, org, entity, "accounts.update", client => client.query(`UPDATE accounts SET ${change},version=version+1,updated_by=$2 WHERE id=$1`, [account.id, finance]))).rejects.toMatchObject({ code: "23514" });
+  }
+  await expect(withScope(finance, org, entity, "accounts.update", client => client.query("UPDATE accounts SET profit_loss_category='not_applicable',updated_by=$2 WHERE id=$1", [account.id, finance]))).rejects.toMatchObject({ code: "P0001" });
+  expect((await getAccount(finance, org, entity, account.id)).version).toBe(1);
+});
 afterAll(async () => {
   const client = await admin.connect();
   try {

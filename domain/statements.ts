@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AccountType, statementSections } from "./accounts";
+import { AccountType, statementSections, ProfitLossCategory, CostBehavior, validProfitLossMapping } from "./accounts";
 import { CalendarDate } from "./finance-setup";
 import { decimal, Exact, money } from "./money";
 import { DomainError } from "./errors";
@@ -23,9 +23,11 @@ export const AccountMovement = z.strictObject({
   accountId: z.uuid(), accountVersion: z.number().int().positive(), code: z.string().min(1).max(100), name: z.string().min(1).max(200),
   type: AccountType, normalSide: z.enum(["debit", "credit"]),
   statementSection: z.enum(["assets", "liabilities", "equity", "revenue", "expenses"]),
+  profitLossCategory: ProfitLossCategory.optional(), costBehavior: CostBehavior.optional(),
   openingDebit: StatementAmount, openingCredit: StatementAmount, periodDebit: StatementAmount, periodCredit: StatementAmount,
   yearDebit: StatementAmount, yearCredit: StatementAmount,
-}).refine(row => row.statementSection === statementSections[row.type], "Retained statement mapping must match the account type.");
+}).refine(row => row.statementSection === statementSections[row.type], "Retained statement mapping must match the account type.")
+  .refine(row => validProfitLossMapping(row.type, row.profitLossCategory ?? "unclassified", row.costBehavior ?? "unclassified"), "Retained P&L category must match the account type and cost behavior.");
 export type AccountMovementValue = z.infer<typeof AccountMovement>;
 
 function split(value: InstanceType<typeof Exact>) {
@@ -79,10 +81,26 @@ export function calculateStatements(value: unknown) {
   const equity = postedEquity.plus(currentYearResult).plus(priorUnclosedResult);
   const difference = assets.minus(liabilities).minus(equity);
   if (!difference.isZero()) throw new DomainError("UNBALANCED_REPORT", "Assets and liabilities plus equity do not balance exactly.");
+  const incomeRows = rows.filter(row => (row.type === "revenue" || row.type === "expense") && (row.periodDebit !== "0.00" || row.periodCredit !== "0.00"));
+  const unclassified = incomeRows.filter(row => !row.profitLossCategory || row.profitLossCategory === "unclassified");
+  const section = (category: z.infer<typeof ProfitLossCategory>) => incomeRows.filter(row => row.profitLossCategory === category)
+    .reduce((total, row) => total.plus(row.type === "revenue" ? decimal(row.periodCredit).minus(row.periodDebit) : decimal(row.periodDebit).minus(row.periodCredit)), new Exact(0));
+  const operatingRevenue = section("revenue"), directCosts = section("direct_cost"), operatingExpenses = section("operating_expense"), otherIncome = section("other_income"), financeCosts = section("finance_cost"), incomeTax = section("income_tax");
+  const missingBehavior = incomeRows.filter(row => ["direct_cost", "operating_expense"].includes(row.profitLossCategory ?? "") && !["fixed", "variable"].includes(row.costBehavior ?? "unclassified"));
+  const variableCosts = incomeRows.filter(row => ["direct_cost", "operating_expense"].includes(row.profitLossCategory ?? "") && row.costBehavior === "variable")
+    .reduce((total, row) => total.plus(row.periodDebit).minus(row.periodCredit), new Exact(0));
+  const complete = unclassified.length === 0, grossProfit = operatingRevenue.minus(directCosts), operatingProfit = grossProfit.minus(operatingExpenses), profitBeforeTax = operatingProfit.plus(otherIncome).minus(financeCosts);
+  if (complete && !profitBeforeTax.minus(incomeTax).equals(result)) throw new DomainError("UNBALANCED_REPORT", "Classified P&L must reconcile exactly to the ledger income movement.");
+  const witnesses = (items: AccountMovementValue[]) => items.map(row => ({ accountId: row.accountId, accountVersion: row.accountVersion, code: row.code, name: row.name })).sort((a, b) => a.accountId.localeCompare(b.accountId) || a.accountVersion - b.accountVersion);
+  const profitLoss = { mappingComplete: complete, operatingRevenue: money(operatingRevenue), directCosts: money(directCosts), operatingExpenses: money(operatingExpenses), otherIncome: money(otherIncome), financeCosts: money(financeCosts), incomeTaxExpense: money(incomeTax),
+    unclassifiedRevenue: money(unclassified.filter(row => row.type === "revenue").reduce((total, row) => total.plus(row.periodCredit).minus(row.periodDebit), new Exact(0))),
+    unclassifiedExpenses: money(unclassified.filter(row => row.type === "expense").reduce((total, row) => total.plus(row.periodDebit).minus(row.periodCredit), new Exact(0))),
+    grossProfit: complete ? money(grossProfit) : null, operatingProfit: complete ? money(operatingProfit) : null, profitBeforeTax: complete ? money(profitBeforeTax) : null, netProfit: complete ? money(result) : null,
+    contributionMargin: complete && missingBehavior.length === 0 ? money(operatingRevenue.minus(variableCosts)) : null,
+    unclassifiedAccounts: witnesses(unclassified), missingCostBehavior: witnesses(missingBehavior) };
   return {
     trialBalance: { rows: trialBalance, totals: trialTotals },
-    // No invented direct-cost/income-tax split: current mappings provide only
-    // revenue/expense sections. Final P&L classification is a separate gate.
+    profitLoss,
     incomeMovement: { revenue: money(revenue), expenses: money(expenses), result: money(result) },
     balanceSheet: { assets: money(assets), liabilities: money(liabilities), postedEquity: money(postedEquity),
       currentYearResult: money(currentYearResult), priorUnclosedResult: money(priorUnclosedResult), equity: money(equity), difference: money(difference) },

@@ -98,3 +98,32 @@ test("finance builds a scoped hierarchy, recovers stale edits and archives witho
     expect(errors).toEqual([]);
   } finally { await readContext.close(); }
 });
+test("finance configures explicit P&L categories and cost behavior without rewriting retained mappings", async ({ page }) => {
+  test.setTimeout(120000);
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/sign-in"); await page.getByLabel("Email", { exact: true }).fill(email); await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click(); await expect(page).toHaveURL(/\/workspace$/, { timeout: 30000 });
+  const company = await page.request.post(`/api/v1/orgs/${org}/entities`, { headers: { "Idempotency-Key": randomUUID() }, data: { name: "P&L mapping company", baseCurrency: "NPR", timezone: "Asia/Kathmandu", activeModes: ["labour"], reportingProfile: "demo_accrual" } });
+  expect(company.status()).toBe(201); const entity = (await company.json()).data, base = `/api/v1/orgs/${org}/entities/${entity.id}/accounts`, screen = `/workspace/accounts?org=${org}&entity=${entity.id}`;
+  await page.goto(screen); const create = page.getByRole("form", { name: "Create account", exact: true });
+  await create.getByLabel("Account type", { exact: true }).click(); await page.getByRole("option", { name: "expense", exact: true }).click();
+  await create.getByLabel("Account code", { exact: true }).fill("DIRECT"); await create.getByLabel("Account name", { exact: true }).fill("Synthetic direct cost");
+  await create.getByLabel("P&L classification", { exact: true }).click(); await page.getByRole("option", { name: "direct cost", exact: true }).click();
+  await create.getByLabel("Cost behavior", { exact: true }).click(); await page.getByRole("option", { name: "variable", exact: true }).click();
+  const created = page.waitForResponse(r => r.url().endsWith(base) && r.request().method() === "POST"); await create.getByRole("button", { name: "Create account", exact: true }).click();
+  const response = await created; expect(response.status()).toBe(201); const account = (await response.json()).data;
+  expect(account.reportMapping).toMatchObject({ profitLossCategory: "direct_cost", costBehavior: "variable" });
+  await page.goto(`${screen}&account=${account.id}`); const edit = page.getByRole("form", { name: "Edit account", exact: true });
+  await expect(edit.getByLabel("P&L classification", { exact: true })).toContainText("direct cost"); await expect(edit.getByLabel("Cost behavior", { exact: true })).toContainText("variable");
+  await page.setViewportSize({ width: 360, height: 800 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: ".local/screenshots/profit-loss-mapping-mobile.png", fullPage: true });
+  await edit.getByLabel("P&L classification", { exact: true }).click(); await page.getByRole("option", { name: "income tax", exact: true }).click();
+  await expect(edit.getByLabel("Cost behavior", { exact: true })).toHaveCount(0);
+  const changed = page.waitForResponse(r => r.url().endsWith(`${base}/${account.id}`) && r.request().method() === "PATCH"); await edit.getByRole("button", { name: "Save account changes", exact: true }).click();
+  expect((await changed).status()).toBe(200); await expect(page.getByText(/normal debit · version 2/)).toBeVisible(); await page.reload();
+  expect((await (await page.request.get(`${base}/${account.id}`)).json()).data.reportMapping).toMatchObject({ profitLossCategory: "income_tax", costBehavior: "unclassified" });
+  const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
+  try { expect((await admin.query("SELECT version,snapshot->>'profit_loss_category' AS category,snapshot->>'cost_behavior' AS behavior FROM account_versions WHERE account_id=$1 ORDER BY version", [account.id])).rows).toEqual([{ version: 1, category: "direct_cost", behavior: "variable" }, { version: 2, category: "income_tax", behavior: "unclassified" }]); }
+  finally { await admin.end(); }
+  expect(errors).toEqual([]);
+});
