@@ -79,7 +79,18 @@ Unresolved balances and unapplied deposits/advances block archival. Settled
 parties retain their source references and all master versions. Roles already
 used by financial sources cannot be removed; posted documents are never changed
 by editing a party. Archived parties cannot be edited or reactivated here.
-Party statements are not yet available.
+Select a party and choose **View party statement**. Supply an inclusive as-of
+date and an optional start date; blank start includes history from 1900-01-01.
+Receivables, payables, customer deposits and supplier advances have separate
+opening, movement and closing balances. Ageing uses the posted due dates.
+Statements include only committed party-linked sources, not drafts or promises.
+
+**Replay this statement cutoff** preserves the captured knowledge, including
+across activity pages. **Run statement** captures fresh knowledge, so later
+backdated entries can change the result. Archived parties remain readable.
+Source and journal references are shown; invoice/payment source screens remain
+unavailable until their dedicated workflows are released. Statements are not
+statutory filings or approved close snapshots.
 
 ### Financial reports
 

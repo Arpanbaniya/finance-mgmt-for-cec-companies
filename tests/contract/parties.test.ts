@@ -35,6 +35,6 @@ it("documents concrete party resources, list and conditional mutation headers", 
   expect(JSON.stringify(spec.paths[`${base}/{id}`].patch)).toContain("If-Match");
   expect(JSON.stringify(spec.paths[`${base}/{id}/archive`].post)).toContain("Idempotency-Key");
   expect(JSON.stringify(spec.components.schemas.PartyCreate)).toContain("pattern");
-  expect(spec.paths[`${base}/{id}/statement`]).toBeUndefined();
+  expect(spec.paths[`${base}/{id}/statement`].get).toMatchObject({ "x-permission": "parties.read" });
   expect(PartyDTO.shape.creditLimit.safeParse(1).success).toBe(false);
 });

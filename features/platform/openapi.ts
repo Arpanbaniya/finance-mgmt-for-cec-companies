@@ -9,6 +9,7 @@ import { FiscalYearDTO, PeriodDTO, PeriodCreate, AccountMappingsDTO, AccountMapp
 import { JournalCreate, JournalPatch, JournalDTO, JournalCancelResult, JournalCommandResult, DateAction } from "@/features/accounting/journal-contracts";
 import { ReportQuery, ReportResult, ReportType } from "@/features/reporting/report-contracts";
 import { PartyDTO, PartyCreate, PartyPatch } from "@/features/parties/contracts";
+import { StatementQuery, PartyStatement } from "@/features/parties/statement-contracts";
 
 const SessionContext = z.strictObject({ user: z.strictObject({ id: z.string(), name: z.string(), email: z.email() }), memberships: z.array(MembershipDTO) });
 const meta = z.strictObject({ requestId: z.string(), version: z.number().int().optional(), nextCursor: z.uuid().nullable().optional() });
@@ -16,9 +17,9 @@ const error = z.strictObject({ error: z.strictObject({ code: z.string(), message
 const responses = { Health: HealthDTO, SessionContext, Entity: EntityDTO, EntityList: z.array(EntityDTO), Membership: MembershipDTO, MembershipList: z.array(MembershipDTO), ApprovalPolicy: ApprovalPolicyDTO, ApprovalPolicyList: z.array(ApprovalPolicyDTO), AuditEventList: z.array(AuditEventDTO), AlertList: z.array(AlertDTO), Job: JobDTO, JobResult, Account: AccountDTO, AccountList: z.array(AccountDTO), Journal: JournalDTO, JournalList: z.array(JournalDTO), FiscalYear: FiscalYearDTO, FiscalYearList: z.array(FiscalYearDTO), Period: PeriodDTO, PeriodList: z.array(PeriodDTO), AccountMappings: AccountMappingsDTO, CommandResult: z.discriminatedUnion("status", [CommandResult, AlertCommandResult, JournalCancelResult, JournalCommandResult]) };
 const requests = { EntityCreate, EntityPatch, MembershipChange, ListQuery, ApprovalPolicyCreate, AuditQuery, Transition, Reason, DateAction, AccountCreate, AccountPatch, JournalCreate, JournalPatch, PeriodCreate, AccountMappingsPatch, NoBody: z.strictObject({}) };
 export function openapi() {
-  const activeRequests = { ...requests, ReportQuery, PartyCreate, PartyPatch }, activeResponses = { ...responses, ReportResult, Party: PartyDTO, PartyList: z.array(PartyDTO) };
+  const activeRequests = { ...requests, ReportQuery, PartyCreate, PartyPatch, StatementQuery }, activeResponses = { ...responses, ReportResult, Party: PartyDTO, PartyList: z.array(PartyDTO), PartyStatement };
   const schemas: Record<string, unknown> = { Error: z.toJSONSchema(error, { unrepresentable: "any" }) };
-  for (const [name, schema] of Object.entries(activeRequests)) schemas[name] = z.toJSONSchema(schema, { unrepresentable: "any", ...(["PartyCreate", "PartyPatch"].includes(name) ? { io: "input" as const } : {}) });
+  for (const [name, schema] of Object.entries(activeRequests)) schemas[name] = z.toJSONSchema(schema, { unrepresentable: "any", ...(["PartyCreate", "PartyPatch", "StatementQuery"].includes(name) ? { io: "input" as const } : {}) });
   for (const [name, schema] of Object.entries(activeResponses)) schemas[name] = z.toJSONSchema(z.strictObject({ data: schema, meta }));
   schemas.ReportQuery = { ...(schemas.ReportQuery as object), description: "Report type is the path parameter. Interval dates are required for trial balance, general ledger and P&L; balance sheet requires asOfDate instead. General ledger requires accountId. Only ledger/trial balance accept cursor and limit. Comparative=true and deferred report types return FEATURE_NOT_ENABLED after scope authorization; dimensions are not accepted.", allOf: [
     { if: { properties: { reportType: { enum: ["trial-balance", "general-ledger", "profit-loss"] } } }, then: { required: ["fromDate", "toDateExclusive"], not: { required: ["asOfDate"] } } },
@@ -36,6 +37,10 @@ export function openapi() {
       for (const [name, schema] of Object.entries(query.properties ?? {})) if (name !== "reportType") parameters.push({ name, in: "query", schema });
     }
     if (row.request_schema === "ListQuery") parameters.push({ name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } }, { name: "cursor", in: "query", schema: { type: "string", format: "uuid" } });
+    if (row.request_schema === "StatementQuery") {
+      const query = z.toJSONSchema(StatementQuery, { unrepresentable: "any" });
+      for (const [name, schema] of Object.entries(query.properties ?? {})) parameters.push({ name, in: "query", required: name === "asOfDate", schema });
+    }
     if (row.request_schema === "AuditQuery") {
       const query = z.toJSONSchema(AuditQuery, { unrepresentable: "any" });
       for (const [name, schema] of Object.entries(query.properties ?? {})) parameters.push({ name, in: "query", schema: name === "limit" ? { type: "integer", minimum: 1, maximum: 100, default: 25 } : schema });

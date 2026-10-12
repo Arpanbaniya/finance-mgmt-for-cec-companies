@@ -18,6 +18,8 @@ import { StatementAggregatesSQL } from "../features/reporting/statement-service"
 import { readReport } from "../features/reporting/report-service";
 import { parseReportQuery } from "../features/reporting/report-query";
 import type { ReportResultValue } from "../features/reporting/report-contracts";
+import { createParty } from "../features/parties/service";
+import { readPartyStatement } from "../features/parties/statement-service";
 import assert from "node:assert/strict";
 
 config({ path: ".env.local", quiet: true });
@@ -26,7 +28,8 @@ for (const name of ["MIGRATION_DATABASE_URL", "DATABASE_URL"]) {
   try { url = new URL(process.env[name] ?? ""); } catch { throw new Error(`${name} must be configured privately for the dedicated local database.`); }
   if (url.hostname !== "127.0.0.1" || url.port !== "55432" || url.pathname !== "/kaamledger") throw new Error("Benchmark writes require the dedicated local database on port 55432; hosted databases are forbidden.");
 }
-const org = randomUUID(), entity = randomUUID(), party = randomUUID(), user = `subledger-benchmark-${randomUUID()}`, owner = `report-owner-${randomUUID()}`;
+const org = randomUUID(), entity = randomUUID(), user = `subledger-benchmark-${randomUUID()}`, owner = `report-owner-${randomUUID()}`;
+let party: string = randomUUID();
 const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
 const accounts: Record<string, string> = {}, samples: number[] = [], historySamples: number[] = [], growth: number[] = [];
 const query = { asOfDate: "2026-12-31", knownAt: "9999-12-31T23:59:59.999999Z", limit: 100 };
@@ -45,6 +48,8 @@ const started = performance.now();
 const includeReports = process.argv.includes("--reports");
 const publicReports = process.argv.includes("--public-reports");
 const planOnly = process.argv.includes("--report-plan-only");
+const partyStatements = process.argv.includes("--party-statements");
+let partyKnowledge = "";
 try {
   await admin.query("INSERT INTO auth_user(id,name,email,email_verified,created_at,updated_at) VALUES($1,'Local subledger benchmark',$2,true,now(),now())", [user, `${user}@example.invalid`]);
   await admin.query("INSERT INTO organizations(id,name) VALUES($1,'Local subledger benchmark')", [org]);
@@ -58,7 +63,8 @@ try {
     const account = await createAccount(user, org, entity, { code, name: code, type, normalSide: type === "asset" || type === "expense" ? "debit" : "credit", isControl: control !== null, controlType: control, reportMapping: { statementSection: type === "asset" ? "assets" : type === "liability" ? "liabilities" : type === "equity" ? "equity" : type === "revenue" ? "revenue" : "expenses", cashFlowCategory: control === "cash" ? "cash" : "unclassified", profitLossCategory: type === "revenue" ? "revenue" : type === "expense" ? "operating_expense" : "not_applicable", costBehavior: type === "expense" ? "fixed" : "not_applicable" } }, randomUUID(), randomUUID()); accounts[code] = account.id;
   }
   await createFiscalYear(user, org, entity, { fiscalYearLabel: "Synthetic benchmark year", retainedEarningsAccountId: accounts.equity, periods: [{ startDate: "2026-01-01", endDateExclusive: "2027-01-01" }] }, randomUUID(), randomUUID());
-  await internal(client => client.query("INSERT INTO subledger_counterparties VALUES($1,$2,$3,$4)", [org, entity, party, user]));
+  if (partyStatements) party = (await createParty(user, org, entity, { name: "Synthetic benchmark customer", roleSet: ["customer"] }, randomUUID(), randomUUID())).id;
+  else await internal(client => client.query("INSERT INTO subledger_counterparties VALUES($1,$2,$3,$4)", [org, entity, party, user]));
   let target = "";
   for (let i = 0; i < 500; i++) {
     const source = randomUUID();
@@ -67,6 +73,7 @@ try {
   }
   const settlement = randomUUID();
   await post({ kind: "ar_deposit", postingDate: "2026-01-10", documentDate: "2026-01-10", partyId: party, amount: "10000.00", controlAccountId: accounts.deposit, counterAccountId: accounts.cash }, settlement);
+  if (partyStatements) partyKnowledge = (await readPartyStatement(user, org, entity, party, { asOfDate: "2026-12-31" })).metadata.knownAt;
   for (let i = 0; i < 100; i++) {
     const source = randomUUID(), tick = performance.now();
     await post({ kind: "application", postingDate: day(i * 2), documentDate: day(i * 2), settlementId: settlement, openItemId: target, amount: "0.01" }, source);
@@ -207,16 +214,44 @@ try {
       targetMet: [firstSamples, middleSamples, statementSamples].every(values => p95(values) < 3000), queryPlan: { executionMs: reportPlan["Execution Time"], footprint: reportFootprint } };
   }
   const server = (await admin.query("SHOW server_version")).rows[0].server_version;
-  console.log(JSON.stringify({ dataset: { journalLines: lineCount, openItems: ids.length, allocationEvents: 200 }, hardware: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)), node: process.version, postgres: server }, warmRead: { runs: samples.length, pageLimit: 100, p95Ms: p95(samples), maxMs: Number(Math.max(...samples).toFixed(3)), targetMet: p95(samples) < 1000 }, historicalPageRead: { runs: historySamples.length, includesHistoryTarget: true, p95Ms: p95(historySamples), targetMet: p95(historySamples) < 1000 }, applicationAndInverse: { cycles: growth.length, first25P95Ms: p95(growth.slice(0, 25)), last25P95Ms: p95(growth.slice(-25)) }, queryPlan: { executionMs: plan["Execution Time"], footprint }, reporting, publicReporting, totalSeconds: Number(((performance.now() - started) / 1000).toFixed(2)) }, null, 2));
+  let partyReporting: Record<string, unknown> | undefined;
+  if (partyStatements) {
+    assert.equal(lineCount, 100000);
+    const first = await readPartyStatement(user, org, entity, party, { asOfDate: "2026-12-31", limit: 100 });
+    const variants = [
+      { label: "current", query: { asOfDate: "2026-12-31", knownAt: first.metadata.knownAt, limit: 100 }, ar: "5000000.00", deposit: "10000.00", sources: "701" },
+      { label: "pageTwo", query: { asOfDate: "2026-12-31", cursor: first.nextCursor!, limit: 100 }, ar: "5000000.00", deposit: "10000.00", sources: "701" },
+      { label: "historicalKnowledge", query: { asOfDate: "2026-12-31", knownAt: partyKnowledge, limit: 100 }, ar: "5000000.00", deposit: "10000.00", sources: "501" },
+      { label: "historicalBusinessDate", query: { asOfDate: "2026-01-15", knownAt: first.metadata.knownAt, limit: 100 }, ar: "4999999.99", deposit: "9999.99", sources: "502" },
+    ];
+    const measured: Record<string, unknown> = {};
+    for (const variant of variants) {
+      for (let i = 0; i < 5; i++) await readPartyStatement(user, org, entity, party, variant.query);
+      const values: number[] = [];
+      for (let i = 0; i < 50; i++) {
+        const tick = performance.now(), result = await readPartyStatement(user, org, entity, party, variant.query); values.push(performance.now() - tick);
+        assert.equal(result.balances.find(b => b.book === "ar")!.closing, variant.ar);
+        assert.equal(result.balances.find(b => b.book === "customer_deposits")!.closing, variant.deposit);
+        assert.equal(result.balances.find(b => b.book === "ap")!.closing, "0.00");
+        assert.equal(result.balances.find(b => b.book === "supplier_advances")!.closing, "0.00");
+        assert.equal(result.metadata.sourceCount, variant.sources); assert.equal(result.activity.length, 100);
+      }
+      measured[variant.label] = { runs: 50, p95Ms: p95(values), maxMs: Number(Math.max(...values).toFixed(3)), independentTies: true };
+      console.log(`Party ${variant.label}: 50 reads, p95 ${p95(values)}ms`);
+      assert.ok(p95(values) < 3000, `Party ${variant.label} exceeds 3-second p95 target`);
+    }
+    partyReporting = { pageLimit: 100, targetMet: true, variants: measured };
+  }
+  console.log(JSON.stringify({ dataset: { journalLines: lineCount, openItems: ids.length, allocationEvents: 200 }, hardware: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)), node: process.version, postgres: server }, warmRead: { runs: samples.length, pageLimit: 100, p95Ms: p95(samples), maxMs: Number(Math.max(...samples).toFixed(3)), targetMet: p95(samples) < 1000 }, historicalPageRead: { runs: historySamples.length, includesHistoryTarget: true, p95Ms: p95(historySamples), targetMet: p95(historySamples) < 1000 }, applicationAndInverse: { cycles: growth.length, first25P95Ms: p95(growth.slice(0, 25)), last25P95Ms: p95(growth.slice(-25)) }, queryPlan: { executionMs: plan["Execution Time"], footprint }, reporting, publicReporting, partyReporting, totalSeconds: Number(((performance.now() - started) / 1000).toFixed(2)) }, null, 2));
 } finally {
   const client = await admin.connect();
-  const triggers = [...["journal_reversal_hold_releases", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties"].map(table => [table, "subledger_immutable"]), ["journal_reversal_holds", "reversal_immutable"], ["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];
+  const triggers = [...["journal_reversal_hold_releases", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties"].map(table => [table, "subledger_immutable"]), ["party_versions", "party_version_immutable"], ["parties", "party_no_delete"], ["journal_reversal_holds", "reversal_immutable"], ["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];
   try {
     await client.query("BEGIN");
     const fixture = await client.query("SELECT name FROM organizations WHERE id=$1 FOR UPDATE", [org]);
     if (fixture.rowCount && fixture.rows[0].name !== "Local subledger benchmark") throw new Error("Benchmark cleanup identity changed");
     for (const [table, trigger] of triggers) await client.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
-    for (const table of ["journal_reversal_hold_releases", "journal_reversal_holds", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties", "journal_lines", "journal_entries", "document_numbers", "document_series", "fiscal_periods", "fiscal_years", "account_versions", "accounts", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
+    for (const table of ["journal_reversal_hold_releases", "journal_reversal_holds", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "party_versions", "parties", "subledger_counterparties", "journal_lines", "journal_entries", "document_numbers", "document_series", "fiscal_periods", "fiscal_years", "account_versions", "accounts", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
     await client.query("DELETE FROM organizations WHERE id=$1", [org]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [[user, owner]]);
     await client.query("SET CONSTRAINTS ALL IMMEDIATE");
     for (const [table, trigger] of triggers) await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);

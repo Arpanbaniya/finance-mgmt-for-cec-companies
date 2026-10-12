@@ -11,6 +11,9 @@ import type { SubledgerSourceValue } from "@/domain/subledger-source";
 import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
 import { readStatementFoundation } from "@/features/reporting/statement-service";
 import { createParty, getParty, patchParty, archiveParty } from "@/features/parties/service";
+import { readPartyStatement } from "@/features/parties/statement-service";
+import { decodeStatementCursor, encodeStatementCursor } from "@/features/parties/statement-query";
+import { StatementQuery } from "@/domain/party-statement";
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), entity = randomUUID(), other = randomUUID(), party = randomUUID(), otherParty = randomUUID();
 const finance = `subledger-${randomUUID()}`, reader = `subledger-${randomUUID()}`, users = [finance, reader];
@@ -312,6 +315,9 @@ it("party archival refuses unresolved balances and preserves fully settled poste
   const before = (await admin.query("SELECT id,journal_id,body,amount::text FROM subledger_sources WHERE party_id=$1 ORDER BY id", [master.id])).rows;
   expect((await archiveParty(finance, org, entity, master.id, { reason: "Settled customer no longer used" }, 1, randomUUID(), randomUUID())).active).toBe(false);
   expect((await getParty(reader, org, entity, master.id)).archiveReason).toBe("Settled customer no longer used");
+  const archivedStatement = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-02-01" });
+  expect(archivedStatement.party).toMatchObject({ active: false, version: 2 });
+  expect(archivedStatement.metadata.sourceCount).toBe("3"); expect(archivedStatement.balances.every(b => b.closing === "0.00")).toBe(true);
   expect((await admin.query("SELECT id,journal_id,body,amount::text FROM subledger_sources WHERE party_id=$1 ORDER BY id", [master.id])).rows).toEqual(before);
   expect((await balance(target)).outstandingAmount).toBe("0.00");
   await expect(post(item("ar", "1.00", master.id))).rejects.toMatchObject({ code: "P0001" });
@@ -332,4 +338,106 @@ it("archive versus new origination serializes without committing an inactive ope
   expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
   const invalid = await admin.query("SELECT 1 FROM parties p JOIN subledger_open_items i ON i.party_id=p.id AND i.organization_id=p.organization_id AND i.legal_entity_id=p.legal_entity_id WHERE p.id=$1 AND NOT p.active", [master.id]);
   expect(invalid.rowCount).toBe(0);
+});
+
+it("party statement reconciles independent dual-role books and retained GL effects without netting", async () => {
+  const master = await createParty(finance, org, entity, { name: `Statement ${randomUUID()}`, roleSet: ["customer", "supplier"] }, randomUUID(), randomUUID());
+  const ar = randomUUID(), ap = randomUUID(), cashIn = randomUUID(), cashOut = randomUUID();
+  await post(item("ar", "3000.00", master.id), ar); await post(item("ap", "2000.00", master.id), ap);
+  await post(deposit("ar", "5000.00", master.id), cashIn); await post(deposit("ap", "2500.00", master.id), cashOut);
+  const targets = (await admin.query("SELECT id,side FROM subledger_open_items WHERE party_id=$1", [master.id])).rows;
+  await post(apply(cashIn, targets.find(t => t.side === "ar").id, "1000.01"));
+  await post(apply(cashOut, targets.find(t => t.side === "ap").id, "500.00"));
+  const result = await readPartyStatement(reader, org, entity, master.id, { fromDate: "2026-02-01", asOfDate: "2026-02-01" });
+  expect(result.balances).toEqual(expect.arrayContaining([
+    { book: "ar", opening: "3000.00", increases: "0.00", decreases: "1000.01", closing: "1999.99", subledgerOpening: "3000.00", subledgerClosing: "1999.99" },
+    { book: "ap", opening: "2000.00", increases: "0.00", decreases: "500.00", closing: "1500.00", subledgerOpening: "2000.00", subledgerClosing: "1500.00" },
+    { book: "customer_deposits", opening: "5000.00", increases: "0.00", decreases: "1000.01", closing: "3999.99", subledgerOpening: "5000.00", subledgerClosing: "3999.99" },
+    { book: "supplier_advances", opening: "2500.00", increases: "0.00", decreases: "500.00", closing: "2000.00", subledgerOpening: "2500.00", subledgerClosing: "2000.00" },
+  ]));
+  expect(result.ageing.find(a => a.side === "ar")!.days1To30).toBe("1999.99");
+  expect(result.activity).toHaveLength(2); expect(result.metadata.sourceCount).toBe("6");
+  expect(JSON.stringify(result)).not.toContain("tax_identifier");
+  const independent = await admin.query(`SELECT v.snapshot->>'control_type' AS book,sum(CASE WHEN v.snapshot->>'control_type' IN ('ar','supplier_advances') THEN l.debit-l.credit ELSE l.credit-l.debit END)::text AS closing
+    FROM subledger_sources s JOIN journal_lines l ON l.journal_id=s.journal_id JOIN account_versions v ON v.account_id=l.account_id AND v.version=l.account_version
+    WHERE s.party_id=$1 AND v.snapshot->>'control_type' IN ('ar','ap','customer_deposits','supplier_advances') GROUP BY v.snapshot->>'control_type'`, [master.id]);
+  expect(independent.rows.map(r => [r.book, r.closing]).sort()).toEqual(result.balances.map(b => [b.book, b.closing]).sort());
+});
+it("party statement replays knowledge and business dates through rename, backdated allocation and inverse", async () => {
+  const master = await createParty(finance, org, entity, { name: `History ${randomUUID()}`, roleSet: ["customer"] }, randomUUID(), randomUUID());
+  const origin = randomUUID(), capacity = randomUUID(); await post(item("ar", "3000.00", master.id), origin); await post(deposit("ar", "5000.00", master.id), capacity);
+  const target = (await admin.query("SELECT id FROM subledger_open_items WHERE source_id=$1", [origin])).rows[0].id;
+  const before = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-02-01", limit: 1 });
+  await patchParty(finance, org, entity, master.id, { name: `Renamed ${randomUUID()}`, paymentTermsDays: 999 }, 1, randomUUID());
+  const application = randomUUID(); await post(apply(capacity, target), application);
+  const replay = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-02-01", knownAt: before.metadata.knownAt, limit: 1 });
+  expect(replay.party).toEqual(before.party); expect(replay.balances).toEqual(before.balances); expect(replay.activity).toEqual(before.activity);
+  expect((await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-02-01" })).balances.find(b => b.book === "ar")!.closing).toBe("0.00");
+  await post(inverse(await allocationId(application)));
+  expect((await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-02-28" })).balances.find(b => b.book === "ar")!.closing).toBe("0.00");
+  const restored = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-03-01" });
+  expect(restored.balances.find(b => b.book === "ar")!.closing).toBe("3000.00");
+  expect(restored.balances.find(b => b.book === "customer_deposits")!.closing).toBe("5000.00");
+  expect(restored.activity.find(a => a.kind === "allocation_reverse")!.effects).toMatchObject({ ar: "3000.00", customer_deposits: "3000.00" });
+});
+it("party statement pages freeze totals, reject foreign and fabricated anchors, and recheck revocation", async () => {
+  const master = await createParty(finance, org, entity, { name: `Page ${randomUUID()}`, roleSet: ["customer"] }, randomUUID(), randomUUID());
+  for (let n = 0; n < 3; n++) await post(item("ar", "0.01", master.id));
+  const q = { asOfDate: "2026-02-01", limit: 1 }, first = await readPartyStatement(reader, org, entity, master.id, q);
+  expect(first.nextCursor).not.toBeNull(); await post(item("ar", "10.00", master.id));
+  const second = await readPartyStatement(reader, org, entity, master.id, { ...q, cursor: first.nextCursor! });
+  const third = await readPartyStatement(reader, org, entity, master.id, { ...q, cursor: second.nextCursor! });
+  expect(new Set([...first.activity, ...second.activity, ...third.activity].map(a => a.sourceId)).size).toBe(3);
+  expect(third.nextCursor).toBeNull(); expect(second.balances).toEqual(first.balances); expect(second.metadata.knownAt).toBe(first.metadata.knownAt);
+  const c = decodeStatementCursor(first.nextCursor!, org, entity, master.id, StatementQuery.parse(q));
+  await expect(readPartyStatement(reader, org, entity, master.id, { ...q, cursor: encodeStatementCursor({ ...c, sourceId: randomUUID() }) })).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  await expect(readPartyStatement(reader, org, entity, randomUUID(), { ...q, cursor: first.nextCursor! })).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  await expect(readPartyStatement(reader, org, other, master.id, q)).rejects.toMatchObject({ status: 404 });
+  await admin.query("UPDATE memberships SET active=false WHERE user_id=$1", [reader]);
+  try { await expect(readPartyStatement(reader, org, entity, master.id, { ...q, cursor: first.nextCursor! })).rejects.toMatchObject({ status: 404 }); }
+  finally { await admin.query("UPDATE memberships SET active=true WHERE user_id=$1", [reader]); }
+});
+it("party statement retains archived identity, exact huge paise and empty histories", async () => {
+  const empty = await createParty(finance, org, entity, { name: `Empty ${randomUUID()}`, roleSet: ["supplier"] }, randomUUID(), randomUUID());
+  await archiveParty(finance, org, entity, empty.id, { reason: "Retired unused party" }, 1, randomUUID(), randomUUID());
+  const result = await readPartyStatement(reader, org, entity, empty.id, { asOfDate: "2026-02-01" });
+  expect(result.party).toMatchObject({ active: false, version: 2 }); expect(result.metadata).toMatchObject({ sourceCount: "0", ledgerWatermark: null });
+  expect(result.activity).toEqual([]); expect(result.balances.every(b => b.closing === "0.00")).toBe(true);
+  const huge = await createParty(finance, org, entity, { name: `Huge ${randomUUID()}`, roleSet: ["customer"] }, randomUUID(), randomUUID());
+  await post(item("ar", "999999999999999999.99", huge.id));
+  expect((await readPartyStatement(reader, org, entity, huge.id, { asOfDate: "2026-02-01" })).balances.find(b => b.book === "ar")!.closing).toBe("999999999999999999.99");
+  await expect(readPartyStatement(reader, org, entity, huge.id, { asOfDate: "2026-02-01", knownAt })).rejects.toMatchObject({ code: "INVALID_REPORT_CUTOFF" });
+  await expect(readPartyStatement(reader, org, entity, randomUUID(), { asOfDate: "2026-02-01" })).rejects.toMatchObject({ status: 404 });
+});
+
+it("party ageing covers exact due-date boundaries independently of current master terms", async () => {
+  const master = await createParty(finance, org, entity, { name: `Ageing ${randomUUID()}`, roleSet: ["customer"], paymentTermsDays: 0 }, randomUUID(), randomUUID());
+  for (const dueDate of ["2026-04-02", "2026-04-01", "2026-03-03", "2026-03-02", "2026-02-01", "2026-01-31", "2026-01-02", "2026-01-01"])
+    await post({ ...item("ar", "0.01", master.id), dueDate } as SubledgerSourceValue);
+  const result = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-04-02" });
+  expect(result.ageing.find(a => a.side === "ar")).toEqual({ side: "ar", current: "0.01", days1To30: "0.02", days31To60: "0.02", days61To90: "0.02", daysOver90: "0.01" });
+  expect(result.balances.find(b => b.book === "ar")!.closing).toBe("0.08");
+});
+
+it("statement visibility includes a retained journal at its exact microsecond, not one microsecond earlier", async () => {
+  const master = await createParty(finance, org, entity, { name: `Microsecond ${randomUUID()}`, roleSet: ["customer"] }, randomUUID(), randomUUID());
+  const source = randomUUID(), journal = await post(item("ar", "0.01", master.id), source);
+  const times = (await admin.query(`SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS exact,
+    to_char((created_at-interval '1 microsecond') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS earlier FROM journal_entries WHERE id=$1`, [journal])).rows[0];
+  const before = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-01-01", knownAt: times.earlier });
+  const exact = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-01-01", knownAt: times.exact });
+  expect(before.metadata.sourceCount).toBe("0"); expect(exact.metadata.sourceCount).toBe("1");
+  expect(exact.balances.find(b => b.book === "ar")!.closing).toBe("0.01");
+});
+it("direct settlements create no deposit capacity and their deferred reversal cannot change history", async () => {
+  const master = await createParty(finance, org, entity, { name: `Direct statement ${randomUUID()}`, roleSet: ["customer"] }, randomUUID(), randomUUID());
+  const source = randomUUID(); await post(item("ar", "3000.00", master.id), source);
+  const target = (await admin.query("SELECT id FROM subledger_open_items WHERE source_id=$1", [source])).rows[0].id;
+  const settlement = randomUUID(); await post({ kind: "ar_direct", postingDate: "2026-02-01", documentDate: "2026-02-01", partyId: master.id, amount: "3000.00", controlAccountId: accounts.ar, counterAccountId: accounts.cash, allocations: [{ openItemId: target, amount: "3000.00" }] }, settlement);
+  expect((await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-02-01" })).balances.find(b => b.book === "ar")!.closing).toBe("0.00");
+  await expect(post(inverse(await allocationId(settlement)))).rejects.toMatchObject({ message: "FEATURE_NOT_ENABLED" });
+  const unchanged = await readPartyStatement(reader, org, entity, master.id, { asOfDate: "2026-03-01" });
+  expect(unchanged.balances.find(b => b.book === "ar")!.closing).toBe("0.00");
+  expect(unchanged.balances.find(b => b.book === "customer_deposits")!.closing).toBe("0.00");
+  expect(unchanged.metadata.sourceCount).toBe("2");
 });
