@@ -62,6 +62,25 @@ Reversal dates and inverse lines are fixed. You may edit the description and sav
 
 The account picker contains eligible accounts from the first hundred chart entries. Branch dimensions supplied through the API must belong to the same company; existing branches are retained when editing. Other dimension types remain unavailable until their scoped masters are implemented.
 
+### Customers and suppliers
+
+Open **Customers and suppliers** on a company card. Finance managers can create
+one party with customer, supplier or both roles, edit contact details and future
+payment terms, and archive with a reason. Accountants and auditors have read-only
+access. Names and nonempty tax identifiers are case-insensitively unique within
+a company and remain reserved after archival.
+
+Payment terms are 0–3650 integer days. Customer credit limits use exact NPR
+decimal strings; leave blank for no configured limit, or enter zero explicitly.
+These are master defaults, not invoice credit enforcement. Bank details are not
+accepted on this screen. Reload the current party after a version conflict.
+
+Unresolved balances and unapplied deposits/advances block archival. Settled
+parties retain their source references and all master versions. Roles already
+used by financial sources cannot be removed; posted documents are never changed
+by editing a party. Archived parties cannot be edited or reactivated here.
+Party statements are not yet available.
+
 ### Financial reports
 
 Open **Financial reports** on a company card. Select profit and loss, balance

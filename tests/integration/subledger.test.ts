@@ -10,6 +10,7 @@ import { readOpenBalances, writeSubledgerSource } from "@/features/accounting/su
 import type { SubledgerSourceValue } from "@/domain/subledger-source";
 import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
 import { readStatementFoundation } from "@/features/reporting/statement-service";
+import { createParty, getParty, patchParty, archiveParty } from "@/features/parties/service";
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), entity = randomUUID(), other = randomUUID(), party = randomUUID(), otherParty = randomUUID();
 const finance = `subledger-${randomUUID()}`, reader = `subledger-${randomUUID()}`, users = [finance, reader];
@@ -25,10 +26,10 @@ async function internal<T>(work: (client: PoolClient) => Promise<T>, company = e
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }
 const post = (input: SubledgerSourceValue, source = randomUUID()) => internal(client => writeSubledgerSource(client, org, entity, source, input, randomUUID()));
-function item(side: "ar" | "ap" = "ar", amount = "3000.00", counterparty = party): SubledgerSourceValue {
+function item(side: "ar" | "ap" = "ar", amount = "3000.00", counterparty: string = party): SubledgerSourceValue {
   return { kind: side === "ar" ? "ar_item" : "ap_item", postingDate: "2026-01-01", documentDate: "2025-12-30", dueDate: "2026-01-31", partyId: counterparty, amount, controlAccountId: accounts[side], counterAccountId: accounts[side === "ar" ? "revenue" : "expense"] };
 }
-function deposit(side: "ar" | "ap" = "ar", amount = "5000.00", counterparty = party): SubledgerSourceValue {
+function deposit(side: "ar" | "ap" = "ar", amount = "5000.00", counterparty: string = party): SubledgerSourceValue {
   return { kind: side === "ar" ? "ar_deposit" : "ap_advance", postingDate: "2026-01-10", documentDate: "2026-01-10", partyId: counterparty, amount, controlAccountId: accounts[side === "ar" ? "customer_deposits" : "supplier_advances"], counterAccountId: accounts.cash };
 }
 async function pair(side: "ar" | "ap" = "ar", amount = "3000.00", sourceAmount = "5000.00") {
@@ -59,10 +60,10 @@ beforeAll(async () => {
 afterAll(async () => {
   const url = new URL(process.env.MIGRATION_DATABASE_URL ?? ""); if (url.hostname !== "127.0.0.1" || url.pathname !== "/kaamledger") return;
   const client = await admin.connect();
-  const triggers = [...["journal_reversal_hold_releases", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties"].map(table => [table, "subledger_immutable"]), ["journal_reversal_holds", "reversal_immutable"], ["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];
+  const triggers = [...["journal_reversal_hold_releases", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties"].map(table => [table, "subledger_immutable"]), ["party_versions", "party_version_immutable"], ["parties", "party_no_delete"], ["journal_reversal_holds", "reversal_immutable"], ["journal_lines", "journal_line_immutable"], ["journal_entries", "journal_entry_immutable"], ["document_numbers", "document_number_immutable"], ["document_series", "document_series_no_delete"], ["fiscal_periods", "fiscal_period_immutable"], ["fiscal_years", "fiscal_year_immutable"], ["account_versions", "account_version_append_only"], ["accounts", "account_no_delete"], ["audit_events", "audit_append_only"]];
   try {
     await client.query("BEGIN"); for (const [table, trigger] of triggers) await client.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
-    for (const table of ["journal_reversal_hold_releases", "journal_reversal_holds", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "subledger_counterparties", "journal_lines", "journal_entries", "document_numbers", "document_series", "fiscal_periods", "fiscal_years", "account_versions", "accounts", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
+    for (const table of ["journal_reversal_hold_releases", "journal_reversal_holds", "subledger_events", "subledger_allocations", "subledger_open_items", "subledger_settlements", "subledger_sources", "party_versions", "parties", "subledger_counterparties", "journal_lines", "journal_entries", "document_numbers", "document_series", "fiscal_periods", "fiscal_years", "account_versions", "accounts", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=$1`, [org]);
     await client.query("DELETE FROM organizations WHERE id=$1", [org]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [users]);
     await client.query("SET CONSTRAINTS ALL IMMEDIATE");
     for (const [table, trigger] of triggers) await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`); await client.query("COMMIT");
@@ -299,4 +300,36 @@ it("the window checker agrees with independent rectangle sums before rejecting a
   expect((await admin.query("SELECT count(*)::int AS n FROM subledger_sources WHERE id=$1", [invalid])).rows[0].n).toBe(0);
   await post(apply(p.settlement, p.target, "3000.00", "2026-02-06")); await internal(client => compare(client, true));
   await expect(withScope(finance, org, entity, "journals.read", client => client.query("SELECT app_security.allocation_rectangles_within_limits($1,$2,$3,$4,3000,5000)", [org, entity, p.target, p.settlement]))).rejects.toMatchObject({ code: "42501" });
+});
+
+it("party archival refuses unresolved balances and preserves fully settled posted history", async () => {
+  const master = await createParty(finance, org, entity, { name: `Customer ${randomUUID()}`, roleSet: ["customer"], paymentTermsDays: 30 }, randomUUID(), randomUUID());
+  const source = randomUUID(), settlement = randomUUID(); await post(item("ar", "3000.00", master.id), source);
+  const target = (await admin.query("SELECT id FROM subledger_open_items WHERE source_id=$1", [source])).rows[0].id;
+  await expect(archiveParty(finance, org, entity, master.id, { reason: "Has an open invoice" }, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ code: "P0001" });
+  await expect(patchParty(finance, org, entity, master.id, { roleSet: ["supplier"] }, 1, randomUUID())).rejects.toMatchObject({ code: "P0001" });
+  await post(deposit("ar", "3000.00", master.id), settlement); const application = randomUUID(); await post(apply(settlement, target), application);
+  const before = (await admin.query("SELECT id,journal_id,body,amount::text FROM subledger_sources WHERE party_id=$1 ORDER BY id", [master.id])).rows;
+  expect((await archiveParty(finance, org, entity, master.id, { reason: "Settled customer no longer used" }, 1, randomUUID(), randomUUID())).active).toBe(false);
+  expect((await getParty(reader, org, entity, master.id)).archiveReason).toBe("Settled customer no longer used");
+  expect((await admin.query("SELECT id,journal_id,body,amount::text FROM subledger_sources WHERE party_id=$1 ORDER BY id", [master.id])).rows).toEqual(before);
+  expect((await balance(target)).outstandingAmount).toBe("0.00");
+  await expect(post(item("ar", "1.00", master.id))).rejects.toMatchObject({ code: "P0001" });
+  await post(inverse(await allocationId(application))); expect((await balance(target)).outstandingAmount).toBe("3000.00");
+  await post(apply(settlement, target, "3000.00", "2026-04-01")); expect((await balance(target)).outstandingAmount).toBe("0.00");
+});
+it("party roles guard new source originations and unapplied capacity blocks archival", async () => {
+  const supplier = await createParty(finance, org, entity, { name: `Supplier ${randomUUID()}`, roleSet: ["supplier"] }, randomUUID(), randomUUID());
+  await expect(post(item("ar", "100.00", supplier.id))).rejects.toMatchObject({ code: "P0001" });
+  await post(deposit("ap", "100.00", supplier.id));
+  await expect(archiveParty(finance, org, entity, supplier.id, { reason: "Unapplied advance remains" }, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ code: "P0001" });
+  await expect(patchParty(finance, org, entity, supplier.id, { roleSet: ["customer"] }, 1, randomUUID())).rejects.toMatchObject({ code: "P0001" });
+  expect((await getParty(reader, org, entity, supplier.id)).version).toBe(1);
+});
+it("archive versus new origination serializes without committing an inactive open party", async () => {
+  const master = await createParty(finance, org, entity, { name: `Race ${randomUUID()}`, roleSet: ["customer"] }, randomUUID(), randomUUID());
+  const results = await Promise.allSettled([archiveParty(finance, org, entity, master.id, { reason: "Retiring this party" }, 1, randomUUID(), randomUUID()), post(item("ar", "10.00", master.id))]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  const invalid = await admin.query("SELECT 1 FROM parties p JOIN subledger_open_items i ON i.party_id=p.id AND i.organization_id=p.organization_id AND i.legal_entity_id=p.legal_entity_id WHERE p.id=$1 AND NOT p.active", [master.id]);
+  expect(invalid.rowCount).toBe(0);
 });

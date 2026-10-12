@@ -41,6 +41,8 @@ try {
   await client.query("GRANT SELECT,INSERT ON job_retries TO kaamledger_app");
   await client.query("GRANT SELECT,INSERT,UPDATE ON accounts TO kaamledger_app");
   await client.query("GRANT SELECT ON account_versions TO kaamledger_app");
+  await client.query("GRANT SELECT,INSERT,UPDATE ON parties TO kaamledger_app");
+  await client.query("GRANT SELECT ON party_versions TO kaamledger_app");
   await client.query("GRANT SELECT ON journal_entries,journal_lines TO kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.owner_statement_aggregates(uuid,uuid,date,date,timestamptz) TO kaamledger_app");
   await client.query("REVOKE ALL ON subledger_counterparties,subledger_sources,subledger_open_items,subledger_settlements,subledger_allocations,subledger_events,journal_reversal_hold_releases FROM kaamledger_app");

@@ -220,6 +220,23 @@ export const journalReversalHolds = pgTable("journal_reversal_holds", {
 export const subledgerCounterparties = pgTable("subledger_counterparties", {
   organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), id: uuid("id").notNull(), createdBy: text("created_by").notNull().references(() => user.id),
 }, t => [primaryKey({ columns: [t.organizationId, t.legalEntityId, t.id] }), foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
+export const parties = pgTable("parties", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), name: text("name").notNull(),
+  nameKey: text("name_key").generatedAlwaysAs(sql`lower(regexp_replace(btrim(name),'[[:space:]]+',' ','g'))`), roleSet: jsonb("role_set").$type<string[]>().notNull(),
+  contact: text("contact"), address: text("address"), taxIdentifier: text("tax_identifier"), taxKey: text("tax_key").generatedAlwaysAs(sql`lower(btrim(tax_identifier))`),
+  paymentTermsDays: integer("payment_terms_days").notNull().default(0), creditLimit: numeric("credit_limit", { precision: 20, scale: 2 }),
+  active: boolean("active").notNull().default(true), version: integer("version").notNull().default(1),
+  createdBy: text("created_by").notNull().references(() => user.id), updatedBy: text("updated_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  archivedBy: text("archived_by").references(() => user.id), archivedAt: timestamp("archived_at", { withTimezone: true }), archiveReason: text("archive_reason"),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id), unique().on(t.organizationId, t.legalEntityId, t.nameKey), unique().on(t.organizationId, t.legalEntityId, t.taxKey),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.id], foreignColumns: [subledgerCounterparties.organizationId, subledgerCounterparties.legalEntityId, subledgerCounterparties.id] })]);
+export const partyVersions = pgTable("party_versions", {
+  organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), partyId: uuid("party_id").notNull(), version: integer("version").notNull(),
+  snapshot: jsonb("snapshot").notNull(), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.organizationId, t.legalEntityId, t.partyId, t.version] }),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId, t.partyId], foreignColumns: [parties.organizationId, parties.legalEntityId, parties.id] })]);
 export const subledgerSources = pgTable("subledger_sources", {
   id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(), partyId: uuid("party_id").notNull(),
   kind: text("kind").notNull(), journalId: uuid("journal_id").notNull().unique(), body: jsonb("body").notNull(), amount: numeric("amount", { precision: 20, scale: 2 }).notNull(),
