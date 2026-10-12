@@ -1,6 +1,15 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, boolean, timestamp, uuid, integer, bigint, jsonb, date, numeric, customType, primaryKey, unique, foreignKey } from "drizzle-orm/pg-core";
 
+export const ruleVersions = pgTable("rule_versions", {
+  id: uuid("id").primaryKey(), organizationId: uuid("organization_id").notNull(), legalEntityId: uuid("legal_entity_id").notNull(),
+  definition: jsonb("definition").notNull(), contentHash: text("content_hash").notNull(), jurisdiction: text("jurisdiction").notNull().default("NP"),
+  currency: text("currency").notNull().default("NPR"), evaluatorVersion: text("evaluator_version").notNull().default("tax-line-v1"),
+  status: text("status").notNull().default("draft"), version: integer("version").notNull().default(1),
+  createdBy: text("created_by").notNull().references(() => user.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [unique().on(t.organizationId, t.legalEntityId, t.id),
+  foreignKey({ columns: [t.organizationId, t.legalEntityId], foreignColumns: [legalEntities.organizationId, legalEntities.id] })]);
+
 // Better Auth owns authentication tables; business authorization is separate.
 export const user = pgTable("auth_user", {
   id: text("id").primaryKey(), name: text("name").notNull(), email: text("email").notNull().unique(),

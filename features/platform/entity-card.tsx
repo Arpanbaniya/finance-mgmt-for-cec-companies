@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Building2 } from "lucide-react";
 import Link from "next/link";
 
-export function EntityCard({ entity, canEdit, canReadPolicies, canReadAccounts, canReadFinanceSetup, canReadJournals, canReadReports = false, canReadParties = false }: { entity: z.infer<typeof EntityDTO>; canEdit: boolean; canReadPolicies: boolean; canReadAccounts: boolean; canReadFinanceSetup: boolean; canReadJournals: boolean; canReadReports?: boolean; canReadParties?: boolean }) {
+export function EntityCard({ entity, canEdit, canReadPolicies, canReadAccounts, canReadFinanceSetup, canReadJournals, canReadReports = false, canReadParties = false, canReadRules = false }: { entity: z.infer<typeof EntityDTO>; canEdit: boolean; canReadPolicies: boolean; canReadAccounts: boolean; canReadFinanceSetup: boolean; canReadJournals: boolean; canReadReports?: boolean; canReadParties?: boolean; canReadRules?: boolean }) {
   const router = useRouter();
   const [record, setRecord] = useState(entity), [editing, setEditing] = useState(false), [pending, setPending] = useState(false);
   const [error, setError] = useState(""), [conflict, setConflict] = useState(false);
@@ -49,6 +49,7 @@ export function EntityCard({ entity, canEdit, canReadPolicies, canReadAccounts, 
     {canReadFinanceSetup ? <div className="mt-3"><Button variant="outline" size="sm" asChild><Link href={`/workspace/finance-setup?org=${entity.organizationId}&entity=${entity.id}`}>Fiscal calendars and mappings</Link></Button></div> : null}
     {canReadJournals ? <div className="mt-3"><Button variant="outline" size="sm" asChild><Link href={`/workspace/journals?org=${entity.organizationId}&entity=${entity.id}`}>Manual journal drafts</Link></Button></div> : null}
     {canReadReports ? <div className="mt-3"><Button variant="outline" size="sm" asChild><Link href={`/workspace/reports?org=${entity.organizationId}&entity=${entity.id}`}>Financial reports</Link></Button></div> : null}
+    {canReadRules ? <div className="mt-3"><Button variant="outline" size="sm" asChild><Link prefetch={false} href={`/workspace/rules?org=${entity.organizationId}&entity=${entity.id}`}>Rule drafts</Link></Button></div> : null}
     {editing ? <form key={record.version} onSubmit={save} aria-label="Edit company" className="mt-5 space-y-4 border-t pt-5">
       <p className="text-xs text-muted-foreground">Company details · version {record.version}. Scope, currency and policy are not editable here.</p>
       <div className="space-y-2"><Label htmlFor={`name-${entity.id}`}>Company name</Label><Input id={`name-${entity.id}`} name="name" defaultValue={record.name} required maxLength={200} disabled={pending} /></div>
