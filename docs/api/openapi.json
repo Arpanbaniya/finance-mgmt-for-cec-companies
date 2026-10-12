@@ -3,7 +3,7 @@
   "info": {
     "title": "KaamLedger R1 — implemented foundation operations",
     "version": "0.1.0",
-    "description": "39 implemented operations from a 256-operation planned R1 catalog. Auth adapter operations are provided separately by Better Auth. Later domain operations are not exposed."
+    "description": "40 implemented operations from a 256-operation planned R1 catalog. Auth adapter operations are provided separately by Better Auth. Later domain operations are not exposed."
   },
   "paths": {
     "/api/v1/health": {
@@ -6138,6 +6138,251 @@
         }
       }
     },
+    "/api/v1/orgs/{orgId}/entities/{entityId}/reports/{reportType}": {
+      "get": {
+        "operationId": "get_orgs_orgId_entities_entityId_reports_reportType",
+        "x-permission": "reports.read",
+        "x-report-query-schema": {
+          "$ref": "#/components/schemas/ReportQuery"
+        },
+        "description": "Four current report variants; raw ledger/trial balance require finance access. Owners receive only minimal P&L/balance-sheet aggregates. Scope is rechecked on every page; no cached private results.",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "entityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "reportType",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "enum": [
+                "trial-balance",
+                "general-ledger",
+                "profit-loss",
+                "balance-sheet",
+                "cash-flow",
+                "ar-ageing",
+                "ap-ageing",
+                "party-statement",
+                "bank-reconciliation",
+                "payroll-summary",
+                "worker-advances",
+                "statutory-liabilities",
+                "labour-profitability",
+                "cost-center-profit-loss",
+                "utilization"
+              ]
+            }
+          },
+          {
+            "name": "fromDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          },
+          {
+            "name": "toDateExclusive",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          },
+          {
+            "name": "asOfDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          },
+          {
+            "name": "knownAt",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+            }
+          },
+          {
+            "name": "accountId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          {
+            "name": "includeComparative",
+            "in": "query",
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/orgs/{orgId}/memberships": {
       "get": {
         "operationId": "get_orgs_orgId_memberships",
@@ -7543,6 +7788,180 @@
         "type": "object",
         "properties": {},
         "additionalProperties": false
+      },
+      "ReportQuery": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "reportType": {
+            "type": "string",
+            "enum": [
+              "trial-balance",
+              "general-ledger",
+              "profit-loss",
+              "balance-sheet",
+              "cash-flow",
+              "ar-ageing",
+              "ap-ageing",
+              "party-statement",
+              "bank-reconciliation",
+              "payroll-summary",
+              "worker-advances",
+              "statutory-liabilities",
+              "labour-profitability",
+              "cost-center-profit-loss",
+              "utilization"
+            ]
+          },
+          "fromDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "toDateExclusive": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "knownAt": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+          },
+          "accountId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "includeComparative": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reportType",
+          "includeComparative"
+        ],
+        "additionalProperties": false,
+        "description": "Report type is the path parameter. Interval dates are required for trial balance, general ledger and P&L; balance sheet requires asOfDate instead. General ledger requires accountId. Only ledger/trial balance accept cursor and limit. Comparative=true and deferred report types return FEATURE_NOT_ENABLED after scope authorization; dimensions are not accepted.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "reportType": {
+                  "enum": [
+                    "trial-balance",
+                    "general-ledger",
+                    "profit-loss"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "fromDate",
+                "toDateExclusive"
+              ],
+              "not": {
+                "required": [
+                  "asOfDate"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reportType": {
+                  "const": "balance-sheet"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "asOfDate"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "fromDate"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "toDateExclusive"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reportType": {
+                  "const": "general-ledger"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "accountId"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "accountId"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reportType": {
+                  "enum": [
+                    "profit-loss",
+                    "balance-sheet"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "limit"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cursor"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
       },
       "Health": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11718,6 +12137,1291 @@
                   "version",
                   "status",
                   "requestId"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "nextCursor": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "requestId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "ReportResult": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "reportType": {
+                    "type": "string",
+                    "const": "trial-balance"
+                  },
+                  "view": {
+                    "type": "string",
+                    "const": "finance"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "properties": {
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "entityId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "const": "NPR"
+                      },
+                      "fromDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "toDateExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "asOfDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "knownAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "generatedAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "ledgerWatermark": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "journalCount": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d*)$"
+                      },
+                      "fiscalYearId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "fiscalYearStart": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "fiscalYearEndExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "retainedEarningsAccountId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "retainedEarningsAccountVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reportingProfile": {
+                        "type": "string",
+                        "enum": [
+                          "demo_accrual",
+                          "review_required"
+                        ]
+                      },
+                      "policyStatus": {
+                        "type": "string",
+                        "enum": [
+                          "demo",
+                          "review_required"
+                        ]
+                      },
+                      "reportVersion": {
+                        "type": "string",
+                        "const": "statement-foundation-v2"
+                      },
+                      "mappingBasis": {
+                        "type": "string",
+                        "const": "posted-account-versions"
+                      }
+                    },
+                    "required": [
+                      "organizationId",
+                      "entityId",
+                      "currency",
+                      "fromDate",
+                      "toDateExclusive",
+                      "asOfDate",
+                      "knownAt",
+                      "generatedAt",
+                      "ledgerWatermark",
+                      "journalCount",
+                      "fiscalYearId",
+                      "fiscalYearStart",
+                      "fiscalYearEndExclusive",
+                      "retainedEarningsAccountId",
+                      "retainedEarningsAccountVersion",
+                      "reportingProfile",
+                      "policyStatus",
+                      "reportVersion",
+                      "mappingBasis"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "rows": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "code": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "asset",
+                            "liability",
+                            "equity",
+                            "revenue",
+                            "expense"
+                          ]
+                        },
+                        "normalSide": {
+                          "type": "string",
+                          "enum": [
+                            "debit",
+                            "credit"
+                          ]
+                        },
+                        "accountVersions": {
+                          "maxItems": 10000,
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "opening": {
+                          "type": "object",
+                          "properties": {
+                            "debit": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                            },
+                            "credit": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                            }
+                          },
+                          "required": [
+                            "debit",
+                            "credit"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "movement": {
+                          "type": "object",
+                          "properties": {
+                            "debit": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                            },
+                            "credit": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                            }
+                          },
+                          "required": [
+                            "debit",
+                            "credit"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "closing": {
+                          "type": "object",
+                          "properties": {
+                            "debit": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                            },
+                            "credit": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                            }
+                          },
+                          "required": [
+                            "debit",
+                            "credit"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "accountId",
+                        "code",
+                        "name",
+                        "type",
+                        "normalSide",
+                        "accountVersions",
+                        "opening",
+                        "movement",
+                        "closing"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "totals": {
+                    "type": "object",
+                    "properties": {
+                      "opening": {
+                        "type": "object",
+                        "properties": {
+                          "debit": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          "credit": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "debit",
+                          "credit"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "movement": {
+                        "type": "object",
+                        "properties": {
+                          "debit": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          "credit": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "debit",
+                          "credit"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "closing": {
+                        "type": "object",
+                        "properties": {
+                          "debit": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          "credit": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          }
+                        },
+                        "required": [
+                          "debit",
+                          "credit"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "opening",
+                      "movement",
+                      "closing"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "page": {
+                    "type": "object",
+                    "properties": {
+                      "totalRows": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10000
+                      },
+                      "nextCursor": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 2048
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "totalRows",
+                      "nextCursor"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "limitations": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "reportType",
+                  "view",
+                  "metadata",
+                  "rows",
+                  "totals",
+                  "page",
+                  "limitations"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "metadata": {
+                    "type": "object",
+                    "properties": {
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "entityId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "const": "NPR"
+                      },
+                      "fromDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "toDateExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "asOfDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "knownAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "generatedAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "ledgerWatermark": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "journalCount": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d*)$"
+                      },
+                      "fiscalYearId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "fiscalYearStart": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "fiscalYearEndExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "retainedEarningsAccountId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "retainedEarningsAccountVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reportingProfile": {
+                        "type": "string",
+                        "enum": [
+                          "demo_accrual",
+                          "review_required"
+                        ]
+                      },
+                      "policyStatus": {
+                        "type": "string",
+                        "enum": [
+                          "demo",
+                          "review_required"
+                        ]
+                      },
+                      "reportVersion": {
+                        "type": "string",
+                        "const": "general-ledger-v1"
+                      },
+                      "mappingBasis": {
+                        "type": "string",
+                        "const": "posted-account-versions"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "balanceConvention": {
+                        "type": "string",
+                        "const": "debit-positive"
+                      },
+                      "watermarkScope": {
+                        "type": "string",
+                        "const": "selected-account"
+                      }
+                    },
+                    "required": [
+                      "organizationId",
+                      "entityId",
+                      "currency",
+                      "fromDate",
+                      "toDateExclusive",
+                      "asOfDate",
+                      "knownAt",
+                      "generatedAt",
+                      "ledgerWatermark",
+                      "journalCount",
+                      "fiscalYearId",
+                      "fiscalYearStart",
+                      "fiscalYearEndExclusive",
+                      "retainedEarningsAccountId",
+                      "retainedEarningsAccountVersion",
+                      "reportingProfile",
+                      "policyStatus",
+                      "reportVersion",
+                      "mappingBasis",
+                      "accountId",
+                      "balanceConvention",
+                      "watermarkScope"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "account": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "code": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "asset",
+                          "liability",
+                          "equity",
+                          "revenue",
+                          "expense"
+                        ]
+                      },
+                      "normalSide": {
+                        "type": "string",
+                        "enum": [
+                          "debit",
+                          "credit"
+                        ]
+                      },
+                      "headerVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "nameBasis": {
+                        "type": "string",
+                        "const": "latest-visible-posted-version-or-initial"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "code",
+                      "name",
+                      "type",
+                      "normalSide",
+                      "headerVersion",
+                      "nameBasis"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "rows": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "journalId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "ordinal": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 500
+                        },
+                        "postingDate": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "documentDate": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "recordedAt": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                        },
+                        "accountVersion": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "accountCode": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "accountName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "debit": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                        },
+                        "credit": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                        },
+                        "source": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "journal",
+                                "invoice",
+                                "bill",
+                                "settlement"
+                              ]
+                            },
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "eventKind": {
+                              "type": "string",
+                              "const": "post"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id",
+                            "eventKind"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "manualJournalId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "runningBalance": {
+                          "type": "string",
+                          "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                        }
+                      },
+                      "required": [
+                        "journalId",
+                        "ordinal",
+                        "postingDate",
+                        "documentDate",
+                        "recordedAt",
+                        "accountVersion",
+                        "accountCode",
+                        "accountName",
+                        "debit",
+                        "credit",
+                        "source",
+                        "manualJournalId",
+                        "runningBalance"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "totals": {
+                    "type": "object",
+                    "properties": {
+                      "openingBalance": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "periodDebit": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "periodCredit": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "closingBalance": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "lineCount": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d*)$"
+                      }
+                    },
+                    "required": [
+                      "openingBalance",
+                      "periodDebit",
+                      "periodCredit",
+                      "closingBalance",
+                      "lineCount"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "page": {
+                    "type": "object",
+                    "properties": {
+                      "precedingBalance": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "endingBalance": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "nextCursor": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 2048
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "precedingBalance",
+                      "endingBalance",
+                      "nextCursor"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "limitations": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "reportType": {
+                    "type": "string",
+                    "const": "general-ledger"
+                  },
+                  "view": {
+                    "type": "string",
+                    "const": "finance"
+                  }
+                },
+                "required": [
+                  "metadata",
+                  "account",
+                  "rows",
+                  "totals",
+                  "page",
+                  "limitations",
+                  "reportType",
+                  "view"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "reportType": {
+                    "type": "string",
+                    "const": "profit-loss"
+                  },
+                  "view": {
+                    "type": "string",
+                    "enum": [
+                      "finance",
+                      "owner"
+                    ]
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "properties": {
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "entityId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "const": "NPR"
+                      },
+                      "fromDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "toDateExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "asOfDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "knownAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "generatedAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "ledgerWatermark": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "fiscalYearId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "fiscalYearStart": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "fiscalYearEndExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "reportingProfile": {
+                        "type": "string",
+                        "enum": [
+                          "demo_accrual",
+                          "review_required"
+                        ]
+                      },
+                      "policyStatus": {
+                        "type": "string",
+                        "enum": [
+                          "demo",
+                          "review_required"
+                        ]
+                      },
+                      "mappingBasis": {
+                        "type": "string",
+                        "const": "posted-account-versions"
+                      },
+                      "reportVersion": {
+                        "type": "string",
+                        "enum": [
+                          "owner-statement-summary-v1",
+                          "statement-foundation-v2"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "organizationId",
+                      "entityId",
+                      "currency",
+                      "fromDate",
+                      "toDateExclusive",
+                      "asOfDate",
+                      "knownAt",
+                      "generatedAt",
+                      "ledgerWatermark",
+                      "fiscalYearId",
+                      "fiscalYearStart",
+                      "fiscalYearEndExclusive",
+                      "reportingProfile",
+                      "policyStatus",
+                      "mappingBasis",
+                      "reportVersion"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "totals": {
+                    "type": "object",
+                    "properties": {
+                      "mappingComplete": {
+                        "type": "boolean"
+                      },
+                      "operatingRevenue": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "directCosts": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "operatingExpenses": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "otherIncome": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "financeCosts": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "incomeTaxExpense": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "unclassifiedRevenue": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "unclassifiedExpenses": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "grossProfit": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "contributionMargin": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "operatingProfit": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "profitBeforeTax": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "netProfit": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "contributionMappingComplete": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "mappingComplete",
+                      "operatingRevenue",
+                      "directCosts",
+                      "operatingExpenses",
+                      "otherIncome",
+                      "financeCosts",
+                      "incomeTaxExpense",
+                      "unclassifiedRevenue",
+                      "unclassifiedExpenses",
+                      "grossProfit",
+                      "contributionMargin",
+                      "operatingProfit",
+                      "profitBeforeTax",
+                      "netProfit",
+                      "contributionMappingComplete"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "incomeMovement": {
+                    "type": "object",
+                    "properties": {
+                      "revenue": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "expenses": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "result": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      }
+                    },
+                    "required": [
+                      "revenue",
+                      "expenses",
+                      "result"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "limitations": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "reportType",
+                  "view",
+                  "metadata",
+                  "totals",
+                  "incomeMovement",
+                  "limitations"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "reportType": {
+                    "type": "string",
+                    "const": "balance-sheet"
+                  },
+                  "view": {
+                    "type": "string",
+                    "enum": [
+                      "finance",
+                      "owner"
+                    ]
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "properties": {
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "entityId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "const": "NPR"
+                      },
+                      "fromDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "toDateExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "asOfDate": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "knownAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "generatedAt": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                      },
+                      "ledgerWatermark": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "fiscalYearId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "fiscalYearStart": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "fiscalYearEndExclusive": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "reportingProfile": {
+                        "type": "string",
+                        "enum": [
+                          "demo_accrual",
+                          "review_required"
+                        ]
+                      },
+                      "policyStatus": {
+                        "type": "string",
+                        "enum": [
+                          "demo",
+                          "review_required"
+                        ]
+                      },
+                      "mappingBasis": {
+                        "type": "string",
+                        "const": "posted-account-versions"
+                      },
+                      "reportVersion": {
+                        "type": "string",
+                        "enum": [
+                          "owner-statement-summary-v1",
+                          "statement-foundation-v2"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "organizationId",
+                      "entityId",
+                      "currency",
+                      "fromDate",
+                      "toDateExclusive",
+                      "asOfDate",
+                      "knownAt",
+                      "generatedAt",
+                      "ledgerWatermark",
+                      "fiscalYearId",
+                      "fiscalYearStart",
+                      "fiscalYearEndExclusive",
+                      "reportingProfile",
+                      "policyStatus",
+                      "mappingBasis",
+                      "reportVersion"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "totals": {
+                    "type": "object",
+                    "properties": {
+                      "assets": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "liabilities": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "postedEquity": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "currentYearResult": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "priorUnclosedResult": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "equity": {
+                        "type": "string",
+                        "pattern": "^-?(?:0|[1-9]\\d*)\\.\\d{2}$"
+                      },
+                      "difference": {
+                        "type": "string",
+                        "const": "0.00"
+                      }
+                    },
+                    "required": [
+                      "assets",
+                      "liabilities",
+                      "postedEquity",
+                      "currentYearResult",
+                      "priorUnclosedResult",
+                      "equity",
+                      "difference"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "limitations": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "reportType",
+                  "view",
+                  "metadata",
+                  "totals",
+                  "limitations"
                 ],
                 "additionalProperties": false
               }

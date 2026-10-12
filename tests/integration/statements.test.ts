@@ -10,6 +10,9 @@ import { writeManualJournal } from "@/features/accounting/posting-kernel";
 import { readStatementFoundation } from "@/features/reporting/statement-service";
 import { readOwnerStatementSummary } from "@/features/reporting/owner-statement-service";
 import { OwnerStatementResult } from "@/features/reporting/contracts";
+import { readReport } from "@/features/reporting/report-service";
+import { decodeTrialCursor, encodeTrialCursor } from "@/features/reporting/trial-balance-cursor";
+import { ReportQuery, ReportResult } from "@/features/reporting/report-contracts";
 import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
 import { decodeLedgerCursor, encodeLedgerCursor } from "@/features/reporting/ledger-cursor";
 import { LedgerQuery } from "@/domain/general-ledger";
@@ -386,4 +389,42 @@ it("captures owner knowledge after an observed in-flight posting commits", async
     expect((await readOwnerStatementSummary(actors.owner, org, entity, { ...interval, knownAt: before.metadata.knownAt })).balanceSheet).toEqual(before.balanceSheet);
     expect(result.balanceSheet.assets).not.toBe(before.balanceSheet.assets);
   } finally { await writer.query("ROLLBACK"); writer.release(); if (pending) await pending.catch(() => undefined); }
+});
+it("exposes strict public variants with whole-report totals and reauthorized stable trial pagination", async () => {
+  const query = { reportType: "trial-balance", ...interval, knownAt: initialCutoff, limit: 2 };
+  let report = await readReport(reader, org, entity, query); expect(ReportResult.safeParse(report).success).toBe(true);
+  if (report.reportType !== "trial-balance") throw Error("Wrong variant");
+  expect(report.totals.closing).toEqual({ debit: "137500.00", credit: "137500.00" });
+  const ids = report.rows.map(row => row.accountId), knownAt = report.metadata.knownAt, firstCursor = report.page.nextCursor!;
+  while (report.page.nextCursor) {
+    const next = await readReport(reader, org, entity, { ...query, knownAt: undefined, cursor: report.page.nextCursor });
+    if (next.reportType !== "trial-balance") throw Error("Wrong variant"); report = next;
+    expect(report.rows.length).toBeLessThanOrEqual(2); expect(report.metadata.knownAt).toBe(knownAt); expect(report.totals.closing.debit).toBe("137500.00"); ids.push(...report.rows.map(row => row.accountId));
+  }
+  expect(ids).toHaveLength(9); expect(new Set(ids).size).toBe(9);
+  const cursor = decodeTrialCursor(firstCursor, org, entity, ReportQuery.parse(query));
+  await expect(readReport(reader, org, entity, { ...query, cursor: encodeTrialCursor({ ...cursor, accountId: randomUUID() }) })).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  await expect(readReport(reader, org, entity, { ...query, fromDate: "2026-02-01", cursor: firstCursor })).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  await admin.query("UPDATE memberships SET active=false WHERE organization_id=$1 AND user_id=$2", [org, reader]);
+  try { await expect(readReport(reader, org, entity, { ...query, cursor: firstCursor })).rejects.toMatchObject({ status: 404 }); }
+  finally { await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, reader]); }
+});
+it("keeps public owner P&L/BS minimal while finance raw variants retain their own permissions", async () => {
+  const pl = await readReport(actors.owner, org, entity, { reportType: "profit-loss", ...interval, knownAt: initialCutoff });
+  expect(pl).toMatchObject({ reportType: "profit-loss", view: "owner", totals: { mappingComplete: false, netProfit: null }, incomeMovement: { result: "10300.00" } });
+  const bs = await readReport(actors.owner, org, entity, { reportType: "balance-sheet", asOfDate: "2026-12-31", knownAt: initialCutoff });
+  expect(bs).toMatchObject({ totals: { assets: "114800.00", equity: "110300.00", difference: "0.00" } });
+  for (const item of [pl, bs]) for (const forbidden of ["accountId", "accountVersion", "journalCount", "retainedEarningsAccount", "unclassifiedAccounts", ...Object.values(accounts)]) expect(JSON.stringify(item)).not.toContain(forbidden);
+  for (const reportType of ["trial-balance", "general-ledger"]) await expect(readReport(actors.owner, org, entity, { reportType, ...interval, ...(reportType === "general-ledger" ? { accountId: accounts.BANK } : {}) })).rejects.toMatchObject({ status: 403 });
+  const ledger = await readReport(reader, org, entity, { reportType: "general-ledger", ...interval, accountId: accounts.BANK, knownAt: initialCutoff });
+  expect(ledger).toMatchObject({ reportType: "general-ledger", view: "finance", totals: { closingBalance: "98500.00" } });
+  const financePl = await readReport(reader, org, entity, { reportType: "profit-loss", ...interval, knownAt: initialCutoff });
+  if (financePl.reportType !== "profit-loss" || pl.reportType !== "profit-loss") throw Error("Wrong variant");
+  expect(financePl.totals).toEqual(pl.totals);
+});
+it("fails explicitly for deferred capabilities without revealing another entity", async () => {
+  await expect(readReport(reader, org, entity, { reportType: "cash-flow" })).rejects.toMatchObject({ code: "FEATURE_NOT_ENABLED" });
+  await expect(readReport(reader, org, other, { reportType: "cash-flow" })).rejects.toMatchObject({ status: 404 });
+  await expect(readReport(actors.site_supervisor, org, entity, { reportType: "cash-flow" })).rejects.toMatchObject({ status: 403 });
+  await expect(readReport(reader, org, entity, { reportType: "profit-loss", ...interval, includeComparative: true })).rejects.toMatchObject({ code: "FEATURE_NOT_ENABLED" });
 });
