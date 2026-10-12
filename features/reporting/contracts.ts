@@ -17,6 +17,15 @@ export const ProfitLossResult = z.strictObject({ mappingComplete: z.boolean(), o
   otherIncome: SignedStatementAmount, financeCosts: SignedStatementAmount, incomeTaxExpense: SignedStatementAmount, unclassifiedRevenue: SignedStatementAmount, unclassifiedExpenses: SignedStatementAmount,
   grossProfit: SignedStatementAmount.nullable(), contributionMargin: SignedStatementAmount.nullable(), operatingProfit: SignedStatementAmount.nullable(), profitBeforeTax: SignedStatementAmount.nullable(), netProfit: SignedStatementAmount.nullable(),
   unclassifiedAccounts: z.array(MappingWitness).max(10000), missingCostBehavior: z.array(MappingWitness).max(10000) });
+export const OwnerStatementMetadata = StatementMetadata.omit({ retainedEarningsAccountId: true, retainedEarningsAccountVersion: true, journalCount: true, reportVersion: true })
+  .extend({ reportVersion: z.literal("owner-statement-summary-v1") });
+export const OwnerStatementResult = z.strictObject({ metadata: OwnerStatementMetadata,
+  profitLoss: ProfitLossResult.omit({ unclassifiedAccounts: true, missingCostBehavior: true }).extend({ contributionMappingComplete: z.boolean() }),
+  incomeMovement: z.strictObject({ revenue: SignedStatementAmount, expenses: SignedStatementAmount, result: SignedStatementAmount }),
+  balanceSheet: z.strictObject({ assets: SignedStatementAmount, liabilities: SignedStatementAmount, postedEquity: SignedStatementAmount,
+    currentYearResult: SignedStatementAmount, priorUnclosedResult: SignedStatementAmount, equity: SignedStatementAmount, difference: z.literal("0.00") }),
+  limitations: z.array(z.string().min(1)).max(10),
+});
 export const GeneralLedgerMetadata = StatementMetadata.extend({ reportVersion: z.literal("general-ledger-v1"), accountId: z.uuid(),
   balanceConvention: z.literal("debit-positive"), watermarkScope: z.literal("selected-account"),
 });

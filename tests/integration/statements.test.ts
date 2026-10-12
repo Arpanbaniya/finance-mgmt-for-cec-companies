@@ -8,6 +8,8 @@ import { createAccount, patchAccount } from "@/features/accounting/accounts-serv
 import { createFiscalYear } from "@/features/accounting/setup-service";
 import { writeManualJournal } from "@/features/accounting/posting-kernel";
 import { readStatementFoundation } from "@/features/reporting/statement-service";
+import { readOwnerStatementSummary } from "@/features/reporting/owner-statement-service";
+import { OwnerStatementResult } from "@/features/reporting/contracts";
 import { readGeneralLedger } from "@/features/reporting/general-ledger-service";
 import { decodeLedgerCursor, encodeLedgerCursor } from "@/features/reporting/ledger-cursor";
 import { LedgerQuery } from "@/domain/general-ledger";
@@ -253,4 +255,135 @@ it("reads classified P&L from consumed versions, pins replay and does not retag 
   expect(current.profitLoss).toMatchObject({ operatingRevenue: "15.00", directCosts: "10.00", operatingExpenses: "5.00", grossProfit: "5.00", contributionMargin: "5.00", operatingProfit: "0.00", profitBeforeTax: "0.00", netProfit: "0.00" });
   expect(current.incomeMovement.result).toBe("0.00"); expect(current.balanceSheet.difference).toBe("0.00");
   expect((await read({ ...june, knownAt: before.metadata.knownAt })).profitLoss).toEqual(before.profitLoss);
+});
+
+it("returns owner aggregate totals matching finance without raw identities at either boundary", async () => {
+  const query = { ...interval, knownAt: initialCutoff };
+  const summary = await readOwnerStatementSummary(actors.owner, org, entity, query), financial = await read(query);
+  expect(summary.balanceSheet).toEqual(financial.balanceSheet);
+  expect(summary.incomeMovement).toEqual({ revenue: "33000.00", expenses: "22700.00", result: "10300.00" });
+  expect(summary.profitLoss).toMatchObject({ mappingComplete: false, contributionMappingComplete: false, grossProfit: null, netProfit: null });
+  expect(OwnerStatementResult.safeParse(summary).success).toBe(true);
+  const raw = await withScope(actors.owner, org, entity, "dashboard.owner", async client => {
+    const result = await client.query("SELECT app_security.owner_statement_aggregates($1,$2,$3,$4,$5) AS summary", [org, entity, interval.fromDate, interval.toDateExclusive, initialCutoff]);
+    for (const table of ["accounts", "account_versions", "journal_entries", "journal_lines", "journal_posting_sources", "manual_journal_revisions"]) {
+      expect((await client.query(`SELECT * FROM ${table} WHERE organization_id=$1 AND legal_entity_id=$2`, [org, entity])).rows).toEqual([]);
+    }
+    return result.rows[0].summary;
+  });
+  for (const value of [summary, raw]) {
+    const serialized = JSON.stringify(value);
+    for (const secret of [...Object.values(accounts), initialJournal, "WAGES", "EMPLOYER", finance, "Independent ordinary-account", "accountId", "accountVersion", "retainedEarningsAccount", "journalCount", "unclassifiedAccounts", "missingCostBehavior"]) expect(serialized).not.toContain(secret);
+  }
+  expect(Object.keys(raw).sort()).toEqual(["buckets", "metadata"]);
+  const role = await databasePool().query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user");
+  expect(role.rows[0]).toEqual({ rolsuper: false, rolbypassrls: false });
+});
+it("keeps owner classified subtotals tied across consumed versions and pinned knowledge", async () => {
+  const query = { fromDate: "2026-06-01", toDateExclusive: "2026-07-01" };
+  const financial = await read(query), summary = await readOwnerStatementSummary(actors.owner, org, entity, { ...query, knownAt: financial.metadata.knownAt });
+  const { unclassifiedAccounts, missingCostBehavior, ...profitLoss } = financial.profitLoss;
+  expect(unclassifiedAccounts).toEqual([]); expect(missingCostBehavior).toEqual([]);
+  expect(summary.profitLoss).toEqual({ ...profitLoss, contributionMappingComplete: true });
+  expect(summary.profitLoss).toMatchObject({ directCosts: "10.00", operatingExpenses: "5.00", contributionMargin: "5.00", netProfit: "0.00" });
+  expect(summary.balanceSheet).toEqual(financial.balanceSheet);
+  await post("2026-06-05", [{ accountId: accounts.AR, debit: "0.01", credit: "0.00" }, { accountId: accounts.REVENUE, accountVersion: 2, debit: "0.00", credit: "0.01" }]);
+  expect((await readOwnerStatementSummary(actors.owner, org, entity, { ...query, knownAt: summary.metadata.knownAt })).profitLoss).toEqual(summary.profitLoss);
+  expect((await readOwnerStatementSummary(actors.owner, org, entity, query)).profitLoss.netProfit).toBe("0.01");
+});
+it("denies owner aggregates for other roles, guessed scopes and direct SQL scope escapes", async () => {
+  for (const actor of [reader, finance, actors.accountant, actors.organization_admin, actors.site_supervisor]) {
+    await expect(readOwnerStatementSummary(actor, org, entity, interval)).rejects.toMatchObject({ status: 403 });
+    await expect(withScope(actor, org, entity, "entity.read", client => client.query("SELECT app_security.owner_statement_aggregates($1,$2,$3,$4,NULL)", [org, entity, interval.fromDate, interval.toDateExclusive]))).rejects.toMatchObject({ code: "42501" });
+  }
+  await expect(readOwnerStatementSummary(actors.owner, org, other, interval)).rejects.toMatchObject({ status: 404 });
+  await expect(readOwnerStatementSummary(actors.owner, randomUUID(), entity, interval)).rejects.toMatchObject({ status: 404 });
+  for (const [company, organization] of [[other, org], [entity, randomUUID()], [null, org], [entity, null]]) {
+    await expect(withScope(actors.owner, org, entity, "dashboard.owner", client => client.query("SELECT app_security.owner_statement_aggregates($1,$2,$3,$4,NULL)", [organization, company, interval.fromDate, interval.toDateExclusive]))).rejects.toMatchObject({ code: "42501" });
+  }
+  await expect(databasePool().query("SELECT app_security.owner_statement_aggregates($1,$2,$3,$4,NULL)", [org, entity, interval.fromDate, interval.toDateExclusive])).rejects.toMatchObject({ code: "42501" });
+});
+it("rechecks owner role and entity revocation and leaves pooled scope unset after rollback", async () => {
+  const id = actors.owner;
+  try {
+    await admin.query("UPDATE memberships SET roles='[\"accountant\"]' WHERE organization_id=$1 AND user_id=$2", [org, id]);
+    await expect(readOwnerStatementSummary(id, org, entity, interval)).rejects.toMatchObject({ status: 403 });
+    await admin.query("UPDATE memberships SET roles='[\"owner\"]',allowed_entity_ids='[]' WHERE organization_id=$1 AND user_id=$2", [org, id]);
+    await expect(readOwnerStatementSummary(id, org, entity, interval)).rejects.toMatchObject({ status: 404 });
+    await admin.query("UPDATE memberships SET allowed_entity_ids=$3,active=false WHERE organization_id=$1 AND user_id=$2", [org, id, JSON.stringify([entity])]);
+    await expect(readOwnerStatementSummary(id, org, entity, interval)).rejects.toMatchObject({ status: 404 });
+  } finally { await admin.query("UPDATE memberships SET roles='[\"owner\"]',allowed_entity_ids=$3,active=true WHERE organization_id=$1 AND user_id=$2", [org, id, JSON.stringify([entity])]); }
+  const scope = await databasePool().query("SELECT nullif(current_setting('app.user_id',true),'') AS actor,nullif(current_setting('app.org_id',true),'') AS org,nullif(current_setting('app.entity_id',true),'') AS entity");
+  expect(scope.rows[0]).toEqual({ actor: null, org: null, entity: null });
+  expect((await readOwnerStatementSummary(id, org, entity, { ...interval, knownAt: initialCutoff })).balanceSheet.assets).toBe("114800.00");
+  await expect(read(undefined, id)).rejects.toMatchObject({ status: 403 });
+});
+it("validates owner intervals, fiscal setup, microsecond bounds and untrusted filters", async () => {
+  await expect(readOwnerStatementSummary(actors.owner, org, entity, { fromDate: "2028-01-01", toDateExclusive: "2029-01-01" })).rejects.toMatchObject({ code: "FISCAL_YEAR_REQUIRED" });
+  await expect(readOwnerStatementSummary(actors.owner, org, entity, { ...interval, knownAt: "9999-12-31T23:59:59.999999Z" })).rejects.toMatchObject({ code: "INVALID_REPORT_CUTOFF" });
+  for (const field of ["accountId", "workerId", "dimensions", "cursor", "sql"]) await expect(readOwnerStatementSummary(actors.owner, org, entity, { ...interval, [field]: "not permitted" })).rejects.toThrow();
+  const at = (await admin.query("SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS at,to_char((created_at-interval '1 microsecond') AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS before FROM journal_entries WHERE id=$1", [initialJournal])).rows[0];
+  expect((await readOwnerStatementSummary(actors.owner, org, entity, { ...interval, knownAt: at.at })).balanceSheet.assets).toBe("114800.00");
+  const empty = await readOwnerStatementSummary(actors.owner, org, entity, { ...interval, knownAt: at.before });
+  expect(empty.balanceSheet.assets).toBe("0.00"); expect(empty.metadata.ledgerWatermark).toBeNull(); expect(empty.profitLoss.netProfit).toBe("0.00");
+  for (const [start, end, knowledge] of [[null, interval.toDateExclusive, null], [interval.fromDate, interval.fromDate, null], ["-infinity", interval.toDateExclusive, null], [interval.fromDate, "infinity", null], [interval.fromDate, interval.toDateExclusive, "infinity"]]) {
+    await expect(withScope(actors.owner, org, entity, "dashboard.owner", client => client.query("SELECT app_security.owner_statement_aggregates($1,$2,$3,$4,$5)", [org, entity, start, end, knowledge]))).rejects.toMatchObject({ code: "22023" });
+  }
+});
+it("keeps the aggregate definer private and immune to temporary-table shadowing", async () => {
+  const privileges = await admin.query("SELECT p.prosecdef,p.proconfig,pg_get_userbyid(p.proowner) AS owner,EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='app_security' AND p.proname='owner_statement_aggregates'");
+  expect(privileges.rows[0]).toMatchObject({ prosecdef: true, public_execute: false, proconfig: ["search_path=pg_catalog, public, pg_temp"] });
+  expect(privileges.rows[0].owner).not.toBe("kaamledger_app");
+  await withScope(actors.owner, org, entity, "dashboard.owner", async client => {
+    await client.query("CREATE TEMP TABLE journal_entries (id uuid) ON COMMIT DROP");
+    await client.query("CREATE TEMP TABLE memberships (organization_id uuid) ON COMMIT DROP");
+    const result = await client.query("SELECT app_security.owner_statement_aggregates($1,$2,$3,$4,$5) AS summary", [org, entity, interval.fromDate, interval.toDateExclusive, initialCutoff]);
+    expect(result.rows[0].summary.buckets).not.toEqual([]);
+    expect(result.rows[0].summary.metadata.ledgerWatermark).not.toBeNull();
+  });
+});
+it("denies a role revoked while the owner read is waiting for the organization lock", async () => {
+  const revoker = await admin.connect(); let pending: Promise<unknown> | undefined;
+  try {
+    await revoker.query("BEGIN");
+    await revoker.query("UPDATE memberships SET roles='[\"accountant\"]' WHERE organization_id=$1 AND user_id=$2", [org, actors.owner]);
+    pending = readOwnerStatementSummary(actors.owner, org, entity, interval).then(result => ({ result }), error => ({ error }));
+    let waiting = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const locks = await admin.query("SELECT 1 FROM pg_stat_activity WHERE usename='kaamledger_app' AND wait_event_type='Lock' AND query LIKE '%app_security.owner_statement_aggregates%'");
+      if (locks.rowCount) { waiting = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(waiting).toBe(true); await revoker.query("COMMIT");
+    expect(await pending).toMatchObject({ error: { code: "FORBIDDEN", status: 403 } });
+  } finally {
+    await revoker.query("ROLLBACK"); revoker.release(); if (pending) await pending;
+    await admin.query("UPDATE memberships SET roles='[\"owner\"]' WHERE organization_id=$1 AND user_id=$2", [org, actors.owner]);
+  }
+});
+it("captures owner knowledge after an observed in-flight posting commits", async () => {
+  const writer = await admin.connect(); let pending: ReturnType<typeof readOwnerStatementSummary> | undefined;
+  const before = await readOwnerStatementSummary(actors.owner, org, entity, interval);
+  try {
+    await writer.query("BEGIN");
+    await writer.query("SELECT set_config('app.user_id',$1,true),set_config('app.org_id',$2,true),set_config('app.entity_id',$3,true)", [finance, org, entity]);
+    const posted = await writeManualJournal(writer, org, entity, randomUUID(), { postingDate: "2026-07-01", documentDate: "2026-07-01", description: "Owner cutoff commit fixture", currency: "NPR", lines: [
+      { accountId: accounts.BANK, accountVersion: 3, debit: "0.01", credit: "0.00", dimensions: {} },
+      { accountId: accounts.REVENUE, accountVersion: 2, debit: "0.00", credit: "0.01", dimensions: {} },
+    ] }, randomUUID());
+    pending = readOwnerStatementSummary(actors.owner, org, entity, interval);
+    let waiting = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const locks = await admin.query("SELECT 1 FROM pg_stat_activity WHERE usename='kaamledger_app' AND wait_event_type='Lock' AND query LIKE '%app_security.owner_statement_aggregates%'");
+      if (locks.rowCount) { waiting = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(waiting).toBe(true); await writer.query("COMMIT");
+    const result = await pending;
+    const financial = await read({ ...interval, knownAt: result.metadata.knownAt });
+    const timestamp = (await admin.query("SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS at FROM journal_entries WHERE id=$1", [posted.id])).rows[0].at;
+    expect(result.metadata.knownAt >= timestamp).toBe(true); expect(result.balanceSheet).toEqual(financial.balanceSheet);
+    expect((await readOwnerStatementSummary(actors.owner, org, entity, { ...interval, knownAt: before.metadata.knownAt })).balanceSheet).toEqual(before.balanceSheet);
+    expect(result.balanceSheet.assets).not.toBe(before.balanceSheet.assets);
+  } finally { await writer.query("ROLLBACK"); writer.release(); if (pending) await pending.catch(() => undefined); }
 });
