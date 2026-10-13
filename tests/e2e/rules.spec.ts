@@ -57,6 +57,14 @@ test("typed rule draft survives reload, shows exact preview, rejects escalation 
     expect((await page.request.post(uploadPath, { headers: { "Idempotency-Key": randomUUID() }, data: { ...declaration, scanState: "clean" } })).status()).toBe(422);
     expect((await page.request.get(`/api/v1/orgs/${org}/entities/${entity}/documents/${randomUUID()}`)).status()).toBe(404);
     expect((await admin.query("SELECT id FROM rule_evidence_requests WHERE organization_id=$1", [org])).rowCount).toBe(0);
+    const documentId = randomUUID(), completionPath = `/api/v1/orgs/${org}/entities/${entity}/documents/${documentId}/complete`, completion = { documentId, sha256: "c".repeat(64) }, headers = { "Idempotency-Key": randomUUID(), "If-Match": '"1"' };
+    expect((await page.request.post(completionPath, { headers: { "Idempotency-Key": randomUUID() }, data: completion })).status()).toBe(428);
+    expect((await page.request.post(completionPath, { headers: { "If-Match": '"1"' }, data: completion })).status()).toBe(400);
+    expect((await page.request.post(completionPath, { headers, data: { ...completion, scanState: "clean" } })).status()).toBe(422);
+    expect((await page.request.post(completionPath, { headers, data: { ...completion, documentId: randomUUID() } })).status()).toBe(422);
+    const missing = await page.request.post(completionPath, { headers, data: completion }); expect(missing.status()).toBe(404); expect(missing.headers()["cache-control"]).toBe("private, no-store");
+    expect((await page.request.post(completionPath, { headers: { ...headers, Origin: "https://wrong.example.invalid" }, data: completion })).status()).toBe(403);
+    expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE organization_id=$1", [org])).rowCount).toBe(0);
     await admin.query("INSERT INTO memberships(id,organization_id,user_id,roles,allowed_entity_ids,site_ids) VALUES($1,$2,$3,'[\"accountant\"]',$4,'[]')", [randomUUID(), org, reader, JSON.stringify([entity])]);
     await page.getByRole("link", { name: "Back to workspace", exact: true }).click(); await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page.getByLabel("Email", { exact: true }).fill(readerEmail); await page.getByLabel("Password", { exact: true }).fill(password); await page.getByRole("button", { name: "Sign in", exact: true }).click(); await expect(page).toHaveURL(/\/workspace$/);

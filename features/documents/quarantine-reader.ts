@@ -18,10 +18,10 @@ type ReaderStorage = { client: S3Client; bucket: string };
  * current membership AND bound owner access and load this trusted reference.
  * This function neither releases a file nor persists a hold or scan decision.
  */
-export async function readQuarantineEvidence(referenceInput: z.input<typeof QuarantineReference>, scopeInput: z.input<typeof Scope>, storage: ReaderStorage) {
+export async function readQuarantineEvidence(referenceInput: z.input<typeof QuarantineReference>, scopeInput: z.input<typeof Scope>, storage: ReaderStorage, deadline?: AbortSignal) {
   const reference = QuarantineReference.parse(referenceInput), scope = Scope.parse(scopeInput);
   if (reference.organizationId !== scope.organizationId || reference.entityId !== scope.entityId) throw new DomainError("NOT_FOUND", "Evidence is unavailable.", 404);
-  const signal = AbortSignal.timeout(15000); let body: Readable | undefined;
+  const signal = deadline ?? AbortSignal.timeout(15000); let body: Readable | undefined;
   const abort = () => body?.destroy(new Error("Evidence read timed out."));
   try {
     const result = await storage.client.send(new GetObjectCommand({ Bucket: storage.bucket, Key: quarantineKey(scope, reference.documentId), IfMatch: reference.etag, VersionId: reference.versionId }), { abortSignal: signal });

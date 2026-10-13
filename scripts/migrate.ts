@@ -47,6 +47,8 @@ try {
   await client.query("REVOKE UPDATE,DELETE,TRUNCATE ON rule_versions FROM kaamledger_app");
   await client.query("GRANT SELECT,INSERT ON rule_evidence_requests TO kaamledger_app");
   await client.query("REVOKE UPDATE,DELETE,TRUNCATE ON rule_evidence_requests FROM kaamledger_app");
+  await client.query("GRANT SELECT,INSERT ON rule_evidence_captures TO kaamledger_app");
+  await client.query("REVOKE UPDATE,DELETE,TRUNCATE ON rule_evidence_captures FROM kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.can_read_rules(uuid) TO kaamledger_app");
   await client.query("GRANT SELECT ON journal_entries,journal_lines TO kaamledger_app");
   await client.query("GRANT EXECUTE ON FUNCTION app_security.owner_statement_aggregates(uuid,uuid,date,date,timestamptz) TO kaamledger_app");

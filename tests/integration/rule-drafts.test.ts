@@ -1,13 +1,19 @@
 import { config } from "dotenv";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { mkdtempSync, mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { createServer } from "node:net";
+import { CreateBucketCommand, DeleteBucketCommand, DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Pool } from "pg";
 import { beforeAll, afterAll, expect, it } from "vitest";
 import { databasePool } from "@/db/client";
 import { withScope } from "@/features/identity/scope";
 import { createRuleDraft, getRuleDraft, listRuleDrafts, checkTaxRuleAvailability } from "@/features/rules/service";
 import type { TaxRuleInput } from "@/domain/tax-rules";
-import { requestRuleEvidenceUpload, getPendingDocument } from "@/features/documents/service";
-import { storageConfig } from "@/features/documents/storage-config";
+import { requestRuleEvidenceUpload, getPendingDocument, completeRuleEvidenceUpload } from "@/features/documents/service";
+import { storageConfig, storageClient } from "@/features/documents/storage-config";
+import { quarantineKey } from "@/features/documents/quarantine-reader";
+import { startStorage } from "@/scripts/storage-process";
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), foreignOrg = randomUUID(), entity = randomUUID(), other = randomUUID(), live = randomUUID(), foreignEntity = randomUUID();
 const finance = `rule-${randomUUID()}`, reader = `rule-${randomUUID()}`, reviewer = `rule-${randomUUID()}`, owner = `rule-${randomUUID()}`, administrator = `rule-${randomUUID()}`, outsider = `rule-${randomUUID()}`;
@@ -19,12 +25,120 @@ const storageKeys = ["S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID"
 const originalStorage = Object.fromEntries(storageKeys.map(name => [name, process.env[name]]));
 const uploadInput = (ownerId: string) => ({ filename: "Synthetic-source.pdf", contentType: "application/pdf" as const, sizeBytes: 100, sha256: "b".repeat(64), sensitivity: "internal" as const, ownerType: "rule_version" as const, ownerId });
 const upload = (ownerId: string, key = randomUUID()) => requestRuleEvidenceUpload(finance, org, entity, uploadInput(ownerId), key, randomUUID());
+let provider: Awaited<ReturnType<typeof startStorage>>, objectClient: ReturnType<typeof storageClient>;
+const objectIds: string[] = [];
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF9sAAAAASUVORK5CYII=", "base64");
+const pngHash = createHash("sha256").update(png).digest("hex");
+async function reserve(content = png, company = entity) {
+  const sha256 = createHash("sha256").update(content).digest("hex"), command = input(); command.sourceReferences[0].sha256 = sha256;
+  const rule = await create(command, company);
+  const grant = await requestRuleEvidenceUpload(finance, org, company, { ...uploadInput(rule.id), filename: "Synthetic-source.png", contentType: "image/png", sizeBytes: content.length, sha256 }, randomUUID(), randomUUID());
+  objectIds.push(grant.documentId); return grant;
+}
+const complete = (id: string, key = randomUUID(), version = 1, user = finance, company = entity, sha256 = pngHash) => completeRuleEvidenceUpload(user, org, company, id, { documentId: id, sha256 }, version, key, randomUUID());
+const put = (id: string, content = png, contentType = "image/png") => objectClient.send(new PutObjectCommand({ Bucket: storageConfig().S3_BUCKET, Key: quarantineKey({ organizationId: org, entityId: entity }, id), Body: content, ContentType: contentType }));
+it("captures actual signed-upload bytes once, stays quarantined and retains provider provenance", async () => {
+  const grant = await reserve(), id = grant.documentId, key = randomUUID();
+  expect((await fetch(grant.url, { method: "PUT", headers: grant.headers, body: png })).status).toBe(200);
+  const [a, b] = await Promise.all([complete(id, key), complete(id, key)]); expect(a).toEqual(b);
+  expect(a).toMatchObject({ id, status: "captured_quarantined", version: 2, scanState: "quarantined", size: png.length, hash: pngHash, actualHash: pngHash, retentionClass: "unconfigured", deletionHold: false, uploadedBy: finance, capturedBy: finance, demoOnly: true });
+  expect(await getPendingDocument(reviewer, org, entity, id)).toEqual(a);
+  const row = (await admin.query("SELECT * FROM rule_evidence_captures WHERE document_id=$1", [id])).rows[0];
+  expect(row.provider_etag).toMatch(/^"[a-z0-9-]+"$/i); expect(row.storage_bucket).toBe(storageConfig().S3_BUCKET); expect(row.storage_endpoint).toBe(storageConfig().S3_ENDPOINT);
+  expect((await admin.query("SELECT id FROM audit_events WHERE target_id=$1 AND action='document.complete'", [id])).rowCount).toBe(1);
+  await objectClient.send(new DeleteObjectCommand({ Bucket: storageConfig().S3_BUCKET, Key: quarantineKey({ organizationId: org, entityId: entity }, id) }));
+  expect(await complete(id, key)).toEqual(a); // Receipt is historical capture, not proof of current object availability.
+  await expect(complete(id, key, 2)).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  await expect(complete(id)).rejects.toMatchObject({ status: 412 });
+  await expect(complete(id, randomUUID(), 2)).rejects.toMatchObject({ code: "INVALID_STATE" });
+});
+it("missing objects, wrong headers, changed hashes and disguised content never create a capture", async () => {
+  const grant = await reserve(), id = grant.documentId;
+  await expect(complete(id)).rejects.toMatchObject({ status: 404 });
+  await put(id, png, "text/html"); await expect(complete(id)).rejects.toMatchObject({ code: "EVIDENCE_INVALID" });
+  await put(id, png.subarray(0, -1)); await expect(complete(id)).rejects.toMatchObject({ code: "EVIDENCE_INVALID" });
+  const wrong = Buffer.from(png); wrong[30] ^= 1; await put(id, wrong); await expect(complete(id)).rejects.toMatchObject({ code: "EVIDENCE_INVALID" });
+  expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE document_id=$1", [id])).rowCount).toBe(0);
+  const html = Buffer.from("<html>Not a PNG file</html>"), disguised = await reserve(html); await put(disguised.documentId, html);
+  await expect(complete(disguised.documentId, randomUUID(), 1, finance, entity, createHash("sha256").update(html).digest("hex"))).rejects.toMatchObject({ code: "EVIDENCE_INVALID" });
+  expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE document_id=$1", [disguised.documentId])).rowCount).toBe(0);
+});
+it("requires matching IDs, hashes, versions and current scoped finance access for completion", async () => {
+  const id = (await reserve()).documentId; await put(id);
+  await expect(completeRuleEvidenceUpload(finance, org, entity, id, { documentId: randomUUID(), sha256: pngHash }, 1, randomUUID(), randomUUID())).rejects.toMatchObject({ code: "DOCUMENT_MISMATCH" });
+  await expect(complete(id, randomUUID(), 1, finance, entity, "c".repeat(64))).rejects.toMatchObject({ code: "SOURCE_MISMATCH" });
+  await expect(complete(id, randomUUID(), 2)).rejects.toMatchObject({ status: 412 });
+  for (const user of [reader, reviewer, owner, administrator]) await expect(complete(id, randomUUID(), 1, user)).rejects.toMatchObject({ status: 403 });
+  await expect(complete(id, randomUUID(), 1, finance, other)).rejects.toMatchObject({ status: 404 });
+  await expect(complete(id, randomUUID(), 1, outsider)).rejects.toMatchObject({ status: 404 });
+  expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE document_id=$1", [id])).rowCount).toBe(0);
+});
+it("revocation and demo profile changes defeat previously successful completion replay", async () => {
+  const id = (await reserve()).documentId, key = randomUUID(); await put(id); await complete(id, key);
+  await admin.query("UPDATE memberships SET active=false WHERE organization_id=$1 AND user_id=$2", [org, finance]);
+  try { await expect(complete(id, key)).rejects.toMatchObject({ status: 404 }); }
+  finally { await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, finance]); }
+  await admin.query("UPDATE legal_entities SET policy_status='review_required' WHERE id=$1", [entity]);
+  try { await expect(complete(id, key)).rejects.toMatchObject({ code: "DEMO_RULE_FORBIDDEN" }); }
+  finally { await admin.query("UPDATE legal_entities SET policy_status='demo' WHERE id=$1", [entity]); }
+});
+it("immutable captures resist runtime/owner history mutation and reject fake clean/hold SQL", async () => {
+  const id = (await reserve()).documentId; await put(id); await complete(id);
+  for (const statement of ["UPDATE rule_evidence_captures SET actual_hash='fake' WHERE document_id=$1", "DELETE FROM rule_evidence_captures WHERE document_id=$1"]) {
+    await expect(withScope(finance, org, entity, "documents.create", client => client.query(statement, [id]))).rejects.toMatchObject({ code: "42501" });
+    await expect(admin.query(statement, [id])).rejects.toMatchObject({ code: "P0001" });
+  }
+  await expect(withScope(finance, org, entity, "documents.create", client => client.query("TRUNCATE rule_evidence_captures"))).rejects.toMatchObject({ code: "42501" });
+  const pending = (await reserve()).documentId;
+  const raw = (size: number, hash: string, scan: string, hold: boolean, actor = finance, scope = entity) => withScope(finance, org, scope, "documents.create", client => client.query(`INSERT INTO rule_evidence_captures(document_id,organization_id,legal_entity_id,actual_size,actual_hash,provider_etag,storage_bucket,storage_endpoint,uploaded_by,captured_by,scan_state,deletion_hold,captured_at)
+    VALUES($1,$2,$3,$4,$5,'"fixture"','test-bucket','https://storage.example.invalid',$6,$7,$8,$9,'1900-01-01') RETURNING *`, [pending, org, scope, size, hash, reviewer, actor, scan, hold]));
+  for (const args of [[png.length + 1, pngHash, "quarantined", false], [png.length, "c".repeat(64), "quarantined", false], [png.length, pngHash, "clean", false], [png.length, pngHash, "quarantined", true]] as const) await expect(raw(args[0], args[1], args[2], args[3])).rejects.toBeDefined();
+  await expect(raw(png.length, pngHash, "quarantined", false, reviewer)).rejects.toBeDefined();
+  await expect(raw(png.length, pngHash, "quarantined", false, finance, other)).rejects.toBeDefined();
+  // SQL cannot verify private bytes: current runtime is a trusted service boundary.
+  // Even a valid direct metadata insert remains quarantined and non-downloadable.
+  const row = (await raw(png.length, pngHash, "quarantined", false)).rows[0]; expect(row.uploaded_by).toBe(finance); expect(row.captured_at.getUTCFullYear()).not.toBe(1900);
+});
+it("capture audit failure rolls back metadata and receipt; same key then safely succeeds", async () => {
+  const id = (await reserve()).documentId, key = randomUUID(), name = `rule_audit_fail_${randomUUID().replaceAll("-", "")}`; await put(id);
+  await admin.query(`CREATE FUNCTION public.${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.organization_id='${org}'::uuid AND NEW.action='document.complete' THEN RAISE EXCEPTION 'Synthetic capture audit failure'; END IF; RETURN NEW; END $$`);
+  await admin.query(`CREATE TRIGGER ${name} BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION public.${name}()`);
+  try {
+    await expect(complete(id, key)).rejects.toMatchObject({ code: "P0001" });
+    expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE document_id=$1", [id])).rowCount).toBe(0);
+    expect((await admin.query("SELECT key FROM idempotency_results WHERE organization_id=$1 AND key=$2", [org, key])).rowCount).toBe(0);
+    expect(await getPendingDocument(finance, org, entity, id)).toMatchObject({ status: "pending_upload", version: 1, actualHash: null });
+  } finally { await admin.query(`DROP TRIGGER ${name} ON audit_events`); await admin.query(`DROP FUNCTION public.${name}()`); }
+  expect(await complete(id, key)).toMatchObject({ version: 2, status: "captured_quarantined" });
+});
+it("missing storage configuration prevents completion without reserving a receipt", async () => {
+  const id = (await reserve()).documentId, key = randomUUID(), endpoint = process.env.S3_ENDPOINT; delete process.env.S3_ENDPOINT;
+  try { await expect(complete(id, key)).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" }); }
+  finally { process.env.S3_ENDPOINT = endpoint; }
+  expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE document_id=$1", [id])).rowCount).toBe(0);
+});
+it("different completion keys racing commit one capture and one explicit stale-version loser", async () => {
+  const id = (await reserve()).documentId; await put(id);
+  const results = await Promise.allSettled([complete(id), complete(id)]);
+  expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
+  expect((results.find(r => r.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ status: 412 });
+  expect((await admin.query("SELECT document_id FROM rule_evidence_captures WHERE document_id=$1", [id])).rowCount).toBe(1);
+  expect((await admin.query("SELECT id FROM audit_events WHERE target_id=$1 AND action='document.complete'", [id])).rowCount).toBe(1);
+});
+it("records reservation issuer separately from the currently authorized capture actor", async () => {
+  const id = (await reserve()).documentId; await put(id);
+  await admin.query("UPDATE memberships SET roles='[\"finance_manager\",\"policy_reviewer\"]' WHERE organization_id=$1 AND user_id=$2", [org, reviewer]);
+  try { expect(await complete(id, randomUUID(), 1, reviewer)).toMatchObject({ uploadedBy: finance, capturedBy: reviewer, requestedBy: finance }); }
+  finally { await admin.query("UPDATE memberships SET roles='[\"policy_reviewer\"]' WHERE organization_id=$1 AND user_id=$2", [org, reviewer]); }
+});
 beforeAll(async () => {
   guard();
-  // Signing does not contact this endpoint. Provider enforcement is tested by
-  // the separate real-storage suite; never reuse deployed credentials here.
-  Object.assign(process.env, { S3_ENDPOINT: "http://127.0.0.1:58080", S3_REGION: "us-east-1", S3_BUCKET: `request-${randomUUID()}`, S3_ACCESS_KEY_ID: randomBytes(16).toString("hex"), S3_SECRET_ACCESS_KEY: randomBytes(32).toString("hex") });
+  const port = await new Promise<number>((ok, fail) => { const probe = createServer(); probe.once("error", fail); probe.listen(0, "127.0.0.1", () => { const address = probe.address(); if (!address || typeof address === "string") return fail(new Error("No fixture port")); probe.close(() => ok(address.port)); }); });
+  Object.assign(process.env, { S3_ENDPOINT: `http://127.0.0.1:${port}`, S3_REGION: "us-east-1", S3_BUCKET: `request-${randomUUID()}`, S3_ACCESS_KEY_ID: randomBytes(16).toString("hex"), S3_SECRET_ACCESS_KEY: randomBytes(32).toString("hex") });
   storageConfig();
+  mkdirSync(".local/storage-tests", { recursive: true });
+  provider = await startStorage(process.env, mkdtempSync(resolve(".local/storage-tests/rule-"))); objectClient = storageClient();
+  await objectClient.send(new CreateBucketCommand({ Bucket: storageConfig().S3_BUCKET }));
   for (const id of users) await admin.query("INSERT INTO auth_user(id,name,email,email_verified,created_at,updated_at) VALUES($1,'Rule fixture',$2,true,now(),now())", [id, `${id}@example.invalid`]);
   await admin.query("INSERT INTO organizations(id,name) VALUES($1,'Rules A'),($2,'Rules B')", [org, foreignOrg]);
   for (const [id, organization, actor] of [[entity, org, finance], [other, org, finance], [foreignEntity, foreignOrg, outsider]]) await admin.query("INSERT INTO legal_entities(id,organization_id,name,active_modes,reporting_profile,created_by) VALUES($1,$2,'Synthetic rules company','[\"labour\"]','demo_accrual',$3)", [id, organization, actor]);
@@ -35,11 +149,15 @@ beforeAll(async () => {
 afterAll(async () => {
   guard(); const client = await admin.connect();
   try {
-    await client.query("BEGIN"); await client.query("ALTER TABLE rule_versions DISABLE TRIGGER rule_immutable"); await client.query("ALTER TABLE audit_events DISABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE rule_evidence_requests DISABLE TRIGGER rule_evidence_immutable");
-    for (const table of ["rule_evidence_requests", "rule_versions", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=ANY($1::uuid[])`, [[org, foreignOrg]]);
+    await client.query("BEGIN"); await client.query("ALTER TABLE rule_versions DISABLE TRIGGER rule_immutable"); await client.query("ALTER TABLE audit_events DISABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE rule_evidence_requests DISABLE TRIGGER rule_evidence_immutable"); await client.query("ALTER TABLE rule_evidence_captures DISABLE TRIGGER rule_capture_immutable");
+    for (const table of ["rule_evidence_captures", "rule_evidence_requests", "rule_versions", "audit_events", "idempotency_results", "memberships", "legal_entities"]) await client.query(`DELETE FROM ${table} WHERE organization_id=ANY($1::uuid[])`, [[org, foreignOrg]]);
     await client.query("DELETE FROM organizations WHERE id=ANY($1::uuid[])", [[org, foreignOrg]]); await client.query("DELETE FROM auth_user WHERE id=ANY($1::text[])", [users]);
-    await client.query("SET CONSTRAINTS ALL IMMEDIATE"); await client.query("ALTER TABLE rule_versions ENABLE TRIGGER rule_immutable"); await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE rule_evidence_requests ENABLE TRIGGER rule_evidence_immutable"); await client.query("COMMIT");
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); await admin.end(); await databasePool().end(); for (const name of storageKeys) { if (originalStorage[name] === undefined) delete process.env[name]; else process.env[name] = originalStorage[name]; } }
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE"); await client.query("ALTER TABLE rule_versions ENABLE TRIGGER rule_immutable"); await client.query("ALTER TABLE audit_events ENABLE TRIGGER audit_append_only"); await client.query("ALTER TABLE rule_evidence_requests ENABLE TRIGGER rule_evidence_immutable"); await client.query("ALTER TABLE rule_evidence_captures ENABLE TRIGGER rule_capture_immutable"); await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally {
+    client.release(); await admin.end(); await databasePool().end();
+    try { if (objectClient) { for (const id of objectIds) await objectClient.send(new DeleteObjectCommand({ Bucket: storageConfig().S3_BUCKET, Key: quarantineKey({ organizationId: org, entityId: entity }, id) })); await objectClient.send(new DeleteBucketCommand({ Bucket: storageConfig().S3_BUCKET })); } }
+    finally { objectClient?.destroy(); await provider?.stop(); for (const name of storageKeys) { if (originalStorage[name] === undefined) delete process.env[name]; else process.env[name] = originalStorage[name]; } }
+  }
 });
 it("persists immutable scoped draft metadata, sources and a database-owned hash", async () => {
   const draft = await create();

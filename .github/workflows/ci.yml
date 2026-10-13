@@ -52,6 +52,7 @@ jobs:
       - run: pnpm api:generate
       - run: git diff --exit-code -- docs/api/openapi.json
       - run: pnpm db:migrate
+      - run: pnpm storage:install
       - run: pnpm test:integration
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium

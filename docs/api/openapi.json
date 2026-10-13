@@ -3,7 +3,7 @@
   "info": {
     "title": "KaamLedger R1 — implemented foundation operations",
     "version": "0.1.0",
-    "description": "51 implemented operations from a 256-operation planned R1 catalog. Auth adapter operations are provided separately by Better Auth. Later domain operations are not exposed."
+    "description": "52 implemented operations from a 256-operation planned R1 catalog. Auth adapter operations are provided separately by Better Auth. Later domain operations are not exposed."
   },
   "paths": {
     "/api/v1/health": {
@@ -3537,6 +3537,195 @@
           "200": {
             "description": "Success",
             "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Domain or request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orgs/{orgId}/entities/{entityId}/documents/{id}/complete": {
+      "post": {
+        "operationId": "post_orgs_orgId_entities_entityId_documents_id_complete",
+        "x-permission": "documents.create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "entityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9_.-]+$"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadComplete"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10267,6 +10456,26 @@
           "sensitivity",
           "ownerType",
           "ownerId"
+        ],
+        "additionalProperties": false
+      },
+      "UploadComplete": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "documentId",
+          "sha256"
         ],
         "additionalProperties": false
       },
@@ -17049,76 +17258,48 @@
         "type": "object",
         "properties": {
           "data": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              "organizationId": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              "entityId": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              "ownerType": {
-                "type": "string",
-                "const": "rule_version"
-              },
-              "ownerId": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              "ownerAggregateType": {
-                "type": "string",
-                "const": "rule_version"
-              },
-              "ownerAggregateId": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              "storageKey": {
-                "type": "string"
-              },
-              "originalName": {
-                "type": "string"
-              },
-              "contentType": {
-                "type": "string",
-                "enum": [
-                  "image/jpeg",
-                  "image/png",
-                  "application/pdf"
-                ]
-              },
-              "size": {
-                "type": "null"
-              },
-              "hash": {
-                "type": "null"
-              },
-              "retentionClass": {
-                "type": "string",
-                "const": "unconfigured"
-              },
-              "deletionHold": {
-                "type": "boolean",
-                "const": false
-              },
-              "declaration": {
+            "oneOf": [
+              {
                 "type": "object",
                 "properties": {
-                  "filename": {
+                  "id": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "entityId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "ownerType": {
+                    "type": "string",
+                    "const": "rule_version"
+                  },
+                  "ownerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "ownerAggregateType": {
+                    "type": "string",
+                    "const": "rule_version"
+                  },
+                  "ownerAggregateId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "storageKey": {
+                    "type": "string"
+                  },
+                  "originalName": {
+                    "type": "string"
                   },
                   "contentType": {
                     "type": "string",
@@ -17128,120 +17309,357 @@
                       "application/pdf"
                     ]
                   },
-                  "sizeBytes": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 10485760
+                  "size": {
+                    "type": "null"
                   },
-                  "sha256": {
+                  "hash": {
+                    "type": "null"
+                  },
+                  "retentionClass": {
                     "type": "string",
-                    "pattern": "^[a-f0-9]{64}$"
+                    "const": "unconfigured"
+                  },
+                  "deletionHold": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "declaration": {
+                    "type": "object",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "enum": [
+                          "image/jpeg",
+                          "image/png",
+                          "application/pdf"
+                        ]
+                      },
+                      "sizeBytes": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10485760
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "filename",
+                      "contentType",
+                      "sizeBytes",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "const": "internal"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "pending_upload"
+                  },
+                  "scanState": {
+                    "type": "string",
+                    "const": "quarantined"
+                  },
+                  "actualHash": {
+                    "type": "null"
+                  },
+                  "capturedAt": {
+                    "type": "null"
+                  },
+                  "uploadedBy": {
+                    "type": "null"
+                  },
+                  "requestedBy": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  "version": {
+                    "type": "number",
+                    "const": 1
+                  },
+                  "demoOnly": {
+                    "type": "boolean"
+                  },
+                  "sourceReferences": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "section": {
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "url",
+                        "section",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
-                  "filename",
+                  "id",
+                  "organizationId",
+                  "entityId",
+                  "ownerType",
+                  "ownerId",
+                  "ownerAggregateType",
+                  "ownerAggregateId",
+                  "storageKey",
+                  "originalName",
                   "contentType",
-                  "sizeBytes",
-                  "sha256"
+                  "size",
+                  "hash",
+                  "retentionClass",
+                  "deletionHold",
+                  "declaration",
+                  "sensitivity",
+                  "status",
+                  "scanState",
+                  "actualHash",
+                  "capturedAt",
+                  "uploadedBy",
+                  "requestedBy",
+                  "createdAt",
+                  "version",
+                  "demoOnly",
+                  "sourceReferences"
                 ],
                 "additionalProperties": false
               },
-              "sensitivity": {
-                "type": "string",
-                "const": "internal"
-              },
-              "status": {
-                "type": "string",
-                "const": "pending_upload"
-              },
-              "scanState": {
-                "type": "string",
-                "const": "quarantined"
-              },
-              "actualHash": {
-                "type": "null"
-              },
-              "capturedAt": {
-                "type": "null"
-              },
-              "uploadedBy": {
-                "type": "null"
-              },
-              "requestedBy": {
-                "type": "string"
-              },
-              "createdAt": {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-              },
-              "version": {
-                "type": "number",
-                "const": 1
-              },
-              "demoOnly": {
-                "type": "boolean"
-              },
-              "sourceReferences": {
-                "minItems": 1,
-                "maxItems": 10,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "title": {
-                      "type": "string"
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "entityId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "ownerType": {
+                    "type": "string",
+                    "const": "rule_version"
+                  },
+                  "ownerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "ownerAggregateType": {
+                    "type": "string",
+                    "const": "rule_version"
+                  },
+                  "ownerAggregateId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "storageKey": {
+                    "type": "string"
+                  },
+                  "originalName": {
+                    "type": "string"
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "application/pdf"
+                    ]
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10485760
+                  },
+                  "hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "retentionClass": {
+                    "type": "string",
+                    "const": "unconfigured"
+                  },
+                  "deletionHold": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "declaration": {
+                    "type": "object",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "enum": [
+                          "image/jpeg",
+                          "image/png",
+                          "application/pdf"
+                        ]
+                      },
+                      "sizeBytes": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10485760
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
                     },
-                    "url": {
-                      "type": "string",
-                      "format": "uri"
-                    },
-                    "section": {
-                      "type": "string"
-                    },
-                    "sha256": {
-                      "type": "string"
+                    "required": [
+                      "filename",
+                      "contentType",
+                      "sizeBytes",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "const": "internal"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "captured_quarantined"
+                  },
+                  "scanState": {
+                    "type": "string",
+                    "const": "quarantined"
+                  },
+                  "actualHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "capturedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  "uploadedBy": {
+                    "type": "string"
+                  },
+                  "requestedBy": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  "version": {
+                    "type": "number",
+                    "const": 2
+                  },
+                  "demoOnly": {
+                    "type": "boolean"
+                  },
+                  "sourceReferences": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "section": {
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "url",
+                        "section",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
                     }
                   },
-                  "required": [
-                    "title",
-                    "url",
-                    "section",
-                    "sha256"
-                  ],
-                  "additionalProperties": false
-                }
+                  "capturedBy": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "organizationId",
+                  "entityId",
+                  "ownerType",
+                  "ownerId",
+                  "ownerAggregateType",
+                  "ownerAggregateId",
+                  "storageKey",
+                  "originalName",
+                  "contentType",
+                  "size",
+                  "hash",
+                  "retentionClass",
+                  "deletionHold",
+                  "declaration",
+                  "sensitivity",
+                  "status",
+                  "scanState",
+                  "actualHash",
+                  "capturedAt",
+                  "uploadedBy",
+                  "requestedBy",
+                  "createdAt",
+                  "version",
+                  "demoOnly",
+                  "sourceReferences",
+                  "capturedBy"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "id",
-              "organizationId",
-              "entityId",
-              "ownerType",
-              "ownerId",
-              "ownerAggregateType",
-              "ownerAggregateId",
-              "storageKey",
-              "originalName",
-              "contentType",
-              "size",
-              "hash",
-              "retentionClass",
-              "deletionHold",
-              "declaration",
-              "sensitivity",
-              "status",
-              "scanState",
-              "actualHash",
-              "capturedAt",
-              "uploadedBy",
-              "requestedBy",
-              "createdAt",
-              "version",
-              "demoOnly",
-              "sourceReferences"
-            ],
-            "additionalProperties": false
+            ]
           },
           "meta": {
             "type": "object",

@@ -9,3 +9,8 @@ export const PendingDocument = z.strictObject({ id: z.uuid(), organizationId: z.
   sourceReferences: z.array(z.strictObject({ title: z.string(), url: z.url(), section: z.string(), sha256: z.string() })).min(1).max(10) });
 export const UploadGrant = z.strictObject({ documentId: z.uuid(), method: z.literal("PUT"), url: z.url(), expiresAt: z.iso.datetime(),
   headers: z.strictObject({ "content-type": z.enum(["image/jpeg", "image/png", "application/pdf"]), "content-length": z.string().regex(/^[1-9][0-9]*$/), "if-none-match": z.literal("*"), "x-amz-checksum-sha256": z.string() }), document: PendingDocument });
+export const UploadComplete = z.strictObject({ documentId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
+export const CapturedDocument = PendingDocument.extend({ status: z.literal("captured_quarantined"), version: z.literal(2),
+  size: z.number().int().min(1).max(10485760), hash: z.string().regex(/^[a-f0-9]{64}$/), actualHash: z.string().regex(/^[a-f0-9]{64}$/),
+  capturedAt: z.iso.datetime(), uploadedBy: z.string(), capturedBy: z.string() });
+export const DocumentDTO = z.discriminatedUnion("status", [PendingDocument, CapturedDocument]);
