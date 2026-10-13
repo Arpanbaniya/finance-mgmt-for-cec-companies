@@ -8,6 +8,9 @@ import { audit } from "@/features/platform/service";
 import { replay, remember } from "@/features/platform/idempotency";
 import { ListQuery, uuid } from "@/features/platform/contracts";
 import { PolicyDraft, PolicyDraftDTO } from "./contracts";
+import { RuleAvailabilityQuery } from "@/domain/rule-availability";
+import { resolveTaxRule } from "@/domain/rule-review";
+import type { z } from "zod";
 function dto(row: Record<string, unknown>) {
   return PolicyDraftDTO.parse({ ...(row.definition as object), id: row.id, organizationId: row.organization_id, entityId: row.legal_entity_id,
     jurisdiction: row.jurisdiction, currency: row.currency, evaluatorVersion: row.evaluator_version, status: row.status, version: row.version,
@@ -43,5 +46,25 @@ export async function createRuleDraft(user: string, org: string, entity: string,
     const rows = await client.query("INSERT INTO rule_versions(id,organization_id,legal_entity_id,definition,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *", [randomUUID(), org, entity, JSON.stringify(command), user]);
     const response = dto(rows.rows[0]); await audit(client, org, user, "rule.create", response.id, requestId, entity);
     await remember(client, org, user, operation, key, hash, response.id, response); return response;
+  });
+}
+
+/** Internal read-only diagnostic, not a posting permit or public preview API.
+ * Current storage has drafts only. No review/test receipts are fabricated.
+ * A financial adapter must eventually lock and load real retained lifecycle
+ * evidence in its own posting transaction before it may consume a rule.
+ */
+export async function checkTaxRuleAvailability(user: string, org: string, entity: string, input: z.input<typeof RuleAvailabilityQuery>) {
+  const query = RuleAvailabilityQuery.parse(input);
+  return withScope(user, org, entity, "rules.read", async client => {
+    const company = await client.query("SELECT policy_status,reporting_profile FROM legal_entities WHERE organization_id=$1 AND id=$2", [org, entity]);
+    if (!company.rowCount) throw new DomainError("NOT_FOUND", "Legal entity is unavailable.", 404);
+    const rows = await client.query(`SELECT * FROM rule_versions WHERE organization_id=$1 AND legal_entity_id=$2
+      AND definition->>'kind'=$3 AND definition->'applicability'->>'event'=$4 AND definition->'applicability'->>'taxCode'=$5
+      AND (definition->>'effectiveFrom')::date<=$6::date AND (NOT definition ? 'effectiveTo' OR $6::date<(definition->>'effectiveTo')::date)
+      ORDER BY id LIMIT 2`, [org, entity, query.kind, query.event, query.taxCode, query.businessDate]);
+    return resolveTaxRule({ ...query, organizationId: org, entityId: entity, companyDemo: company.rows[0].policy_status === "demo" && company.rows[0].reporting_profile === "demo_accrual", now: new Date().toISOString() },
+      rows.rows.map(row => { const draft = dto(row); return { record: { id: draft.id, organizationId: draft.organizationId, entityId: draft.entityId, version: draft.version,
+        contentHash: draft.contentHash, createdBy: draft.createdBy, createdAt: draft.createdAt, evaluatorVersion: draft.evaluatorVersion, status: draft.status, policy: PolicyDraft.parse(row.definition) } }; }));
   });
 }

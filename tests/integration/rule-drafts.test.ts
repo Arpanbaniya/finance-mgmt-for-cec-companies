@@ -4,7 +4,7 @@ import { Pool } from "pg";
 import { beforeAll, afterAll, expect, it } from "vitest";
 import { databasePool } from "@/db/client";
 import { withScope } from "@/features/identity/scope";
-import { createRuleDraft, getRuleDraft, listRuleDrafts } from "@/features/rules/service";
+import { createRuleDraft, getRuleDraft, listRuleDrafts, checkTaxRuleAvailability } from "@/features/rules/service";
 import type { TaxRuleInput } from "@/domain/tax-rules";
 config({ path: ".env.local", quiet: true });
 const org = randomUUID(), foreignOrg = randomUUID(), entity = randomUUID(), other = randomUUID(), live = randomUUID(), foreignEntity = randomUUID();
@@ -98,4 +98,21 @@ it("audit failure atomically rolls back the draft and durable receipt", async ()
     expect((await admin.query("SELECT key FROM idempotency_results WHERE organization_id=$1 AND key=$2", [org, key])).rowCount).toBe(0);
   } finally { await admin.query(`DROP TRIGGER ${triggerName} ON audit_events`); await admin.query(`DROP FUNCTION public.${functionName}()`); }
   expect(await create(input(), entity, key)).toMatchObject({ status: "draft" });
+});
+it("real scoped drafts and empty/expired selections never become posting authority", async () => {
+  await create();
+  const query = { kind: "sales_tax" as const, event: "invoice" as const, taxCode: "DEMO_OUTPUT", businessDate: "2026-10-13" };
+  for (const input of [query, { ...query, businessDate: "2027-01-01" }, { ...query, taxCode: "MISSING" }]) await expect(checkTaxRuleAvailability(finance, org, entity, input)).rejects.toMatchObject({ code: "RULE_NOT_VERIFIED" });
+  await create({ ...input(), demoOnly: false }, live);
+  await expect(checkTaxRuleAvailability(finance, org, live, query)).rejects.toMatchObject({ code: "RULE_NOT_VERIFIED" });
+  expect((await admin.query("SELECT count(*)::int AS n FROM rule_versions WHERE organization_id=$1 AND status<>'draft'", [org])).rows[0].n).toBe(0);
+});
+it("availability uses current membership and rejects client profile/reviewer overrides", async () => {
+  const query = { kind: "sales_tax" as const, event: "invoice" as const, taxCode: "DEMO_OUTPUT", businessDate: "2026-10-13" };
+  for (const user of [owner, administrator]) await expect(checkTaxRuleAvailability(user, org, entity, query)).rejects.toMatchObject({ status: 403 });
+  await expect(checkTaxRuleAvailability(outsider, org, entity, query)).rejects.toMatchObject({ status: 404 });
+  await expect(checkTaxRuleAvailability(finance, org, entity, { ...query, companyDemo: true } as typeof query)).rejects.toBeDefined();
+  await admin.query("UPDATE memberships SET active=false WHERE organization_id=$1 AND user_id=$2", [org, reviewer]);
+  try { await expect(checkTaxRuleAvailability(reviewer, org, entity, query)).rejects.toMatchObject({ status: 404 }); }
+  finally { await admin.query("UPDATE memberships SET active=true WHERE organization_id=$1 AND user_id=$2", [org, reviewer]); }
 });
