@@ -1,11 +1,11 @@
 export const roleGrants = {
   organization_admin: ["entity.read", "entity.create", "entity.update", "membership.read", "membership.create", "membership.update", "settings.read", "approvals.read", "approvals.create", "audit.read", "alerts.read", "alerts.update"],
   owner: ["entity.read", "reports.read", "dashboard.owner"],
-  finance_manager: ["entity.read", "settings.read", "settings.update", "accounts.read", "accounts.create", "accounts.update", "parties.read", "parties.create", "parties.update", "rules.read", "rules.create", "journals.read", "journals.create", "journals.update", "journals.submit", "journals.approve", "journals.post", "journals.reverse", "periods.read", "periods.create", "periods.close", "periods.reopen", "periods.approve", "reports.read", "audit.read", "approvals.read", "approvals.create", "alerts.read", "alerts.update"],
-  accountant: ["entity.read", "settings.read", "accounts.read", "parties.read", "rules.read", "journals.read", "journals.create", "journals.update", "journals.submit", "periods.read", "reports.read"],
-  auditor: ["entity.read", "settings.read", "accounts.read", "parties.read", "rules.read", "journals.read", "periods.read", "reports.read", "audit.read", "approvals.read", "alerts.read", "alerts.update"],
+  finance_manager: ["entity.read", "settings.read", "settings.update", "accounts.read", "accounts.create", "accounts.update", "parties.read", "parties.create", "parties.update", "rules.read", "rules.create", "documents.read", "documents.create", "journals.read", "journals.create", "journals.update", "journals.submit", "journals.approve", "journals.post", "journals.reverse", "periods.read", "periods.create", "periods.close", "periods.reopen", "periods.approve", "reports.read", "audit.read", "approvals.read", "approvals.create", "alerts.read", "alerts.update"],
+  accountant: ["entity.read", "settings.read", "accounts.read", "parties.read", "rules.read", "documents.read", "journals.read", "journals.create", "journals.update", "journals.submit", "periods.read", "reports.read"],
+  auditor: ["entity.read", "settings.read", "accounts.read", "parties.read", "rules.read", "documents.read", "journals.read", "periods.read", "reports.read", "audit.read", "approvals.read", "alerts.read", "alerts.update"],
   site_supervisor: ["entity.read", "sites.read", "workers.read", "attendance.read", "attendance.create", "attendance.submit", "expenses.create"],
-  policy_reviewer: ["entity.read", "rules.read", "approvals.read", "approval_policies.activate", "alerts.read", "alerts.update", "jobs.read", "jobs.update"]
+  policy_reviewer: ["entity.read", "rules.read", "documents.read", "approvals.read", "approval_policies.activate", "alerts.read", "alerts.update", "jobs.read", "jobs.update"]
 } as const;
 export type Role = keyof typeof roleGrants;
 export function permissionsFor(roles: string[]): Set<string> {

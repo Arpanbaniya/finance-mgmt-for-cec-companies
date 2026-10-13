@@ -51,6 +51,12 @@ test("typed rule draft survives reload, shows exact preview, rejects escalation 
   const admin = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
   try {
     expect((await admin.query("SELECT id FROM rule_versions WHERE organization_id=$1", [org])).rowCount).toBe(1); expect((await admin.query("SELECT id FROM audit_events WHERE target_id=$1 AND action='rule.create'", [draft.id])).rowCount).toBe(1);
+    const uploadPath = `/api/v1/orgs/${org}/entities/${entity}/documents/upload-requests`, declaration = { filename: "Synthetic.pdf", contentType: "application/pdf", sizeBytes: 100, sha256: "c".repeat(64), sensitivity: "internal", ownerType: "rule_version", ownerId: draft.id };
+    const unavailable = await page.request.post(uploadPath, { headers: { "Idempotency-Key": randomUUID() }, data: declaration });
+    expect(unavailable.status()).toBe(503); expect((await unavailable.json()).error.code).toBe("STORAGE_UNAVAILABLE"); expect(unavailable.headers()["cache-control"]).toBe("private, no-store");
+    expect((await page.request.post(uploadPath, { headers: { "Idempotency-Key": randomUUID() }, data: { ...declaration, scanState: "clean" } })).status()).toBe(422);
+    expect((await page.request.get(`/api/v1/orgs/${org}/entities/${entity}/documents/${randomUUID()}`)).status()).toBe(404);
+    expect((await admin.query("SELECT id FROM rule_evidence_requests WHERE organization_id=$1", [org])).rowCount).toBe(0);
     await admin.query("INSERT INTO memberships(id,organization_id,user_id,roles,allowed_entity_ids,site_ids) VALUES($1,$2,$3,'[\"accountant\"]',$4,'[]')", [randomUUID(), org, reader, JSON.stringify([entity])]);
     await page.getByRole("link", { name: "Back to workspace", exact: true }).click(); await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page.getByLabel("Email", { exact: true }).fill(readerEmail); await page.getByLabel("Password", { exact: true }).fill(password); await page.getByRole("button", { name: "Sign in", exact: true }).click(); await expect(page).toHaveURL(/\/workspace$/);

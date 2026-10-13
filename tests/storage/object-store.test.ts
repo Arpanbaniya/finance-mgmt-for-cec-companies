@@ -9,6 +9,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { startStorage } from "@/scripts/storage-process";
 import { storageClient } from "@/features/documents/storage-config";
 import { quarantineKey, readQuarantineEvidence } from "@/features/documents/quarantine-reader";
+import { signQuarantineUpload } from "@/features/documents/upload-grant";
 
 describe("real private persistent object store", () => {
   let service: Awaited<ReturnType<typeof startStorage>>, client: ReturnType<typeof storageClient>;
@@ -18,6 +19,7 @@ describe("real private persistent object store", () => {
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF9sAAAAASUVORK5CYII=", "base64");
   const declaration = { filename: "Synthetic-source.png", contentType: "image/png" as const, sizeBytes: png.length, sha256: createHash("sha256").update(png).digest("hex") };
   let evidenceETag: string;
+  const uploadIds = [randomUUID(), randomUUID(), randomUUID()];
   beforeAll(async () => {
     const port = await new Promise<number>((ok, fail) => {
       const probe = createServer(); probe.once("error", fail);
@@ -32,7 +34,7 @@ describe("real private persistent object store", () => {
   });
   afterAll(async () => {
     try {
-      if (client) { for (const objectKey of [key, evidenceKey]) await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey })); await client.send(new DeleteBucketCommand({ Bucket: bucket })); }
+      if (client) { for (const objectKey of [key, evidenceKey, ...uploadIds.map(id => quarantineKey(scope, id))]) await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey })); await client.send(new DeleteBucketCommand({ Bucket: bucket })); }
     } finally { client?.destroy(); await service?.stop(); }
   });
   it("retrieves authenticated content and denies anonymous reads and listings", async () => {
@@ -72,5 +74,21 @@ describe("real private persistent object store", () => {
   it("rejects an overwritten quarantine object instead of reading its replacement", async () => {
     await client.send(new PutObjectCommand({ Bucket: bucket, Key: evidenceKey, Body: Buffer.from("Replaced file"), ContentType: "image/png" }));
     await expect(readQuarantineEvidence({ ...scope, documentId, declaration, etag: evidenceETag }, scope, { client, bucket })).rejects.toMatchObject({ code: "EVIDENCE_CHANGED" });
+  });
+  it("accepts the exact signed private PUT and rejects reuse or GET of its capability", async () => {
+    const grant = await signQuarantineUpload(scope, uploadIds[0], declaration, { client, bucket }, new Date());
+    expect((await fetch(grant.url, { method: "PUT", headers: grant.headers, body: png })).status).toBe(200);
+    expect((await fetch(grant.url, { method: "PUT", headers: grant.headers, body: png })).status).toBe(412);
+    expect((await fetch(grant.url)).status).toBe(403);
+    const stored = await client.send(new GetObjectCommand({ Bucket: bucket, Key: quarantineKey(scope, uploadIds[0]) })); expect(Buffer.from(await stored.Body!.transformToByteArray()).equals(png)).toBe(true);
+  });
+  it("rejects changed MIME, length, checksum and expired private upload grants", async () => {
+    const grant = await signQuarantineUpload(scope, uploadIds[1], declaration, { client, bucket }, new Date());
+    expect((await fetch(grant.url, { method: "PUT", headers: { ...grant.headers, "content-type": "text/html" }, body: png })).status).toBe(403);
+    const wrong = Buffer.from(png); wrong[10] ^= 1;
+    expect((await fetch(grant.url, { method: "PUT", headers: grant.headers, body: wrong })).status).toBe(400);
+    expect((await fetch(grant.url, { method: "PUT", headers: { ...grant.headers, "content-length": String(png.length + 1) }, body: Buffer.concat([png, Buffer.from([0])]) })).status).toBe(403);
+    const expired = await signQuarantineUpload(scope, uploadIds[2], declaration, { client, bucket }, new Date(Date.now() - 600000));
+    expect((await fetch(expired.url, { method: "PUT", headers: expired.headers, body: png })).status).toBe(403);
   });
 });

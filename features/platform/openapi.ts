@@ -11,6 +11,7 @@ import { ReportQuery, ReportResult, ReportType } from "@/features/reporting/repo
 import { PartyDTO, PartyCreate, PartyPatch } from "@/features/parties/contracts";
 import { StatementQuery, PartyStatement } from "@/features/parties/statement-contracts";
 import { PolicyDraft, PolicyDraftDTO } from "@/features/rules/contracts";
+import { DocumentUploadRequest, PendingDocument, UploadGrant } from "@/features/documents/contracts";
 
 const SessionContext = z.strictObject({ user: z.strictObject({ id: z.string(), name: z.string(), email: z.email() }), memberships: z.array(MembershipDTO) });
 const meta = z.strictObject({ requestId: z.string(), version: z.number().int().optional(), nextCursor: z.uuid().nullable().optional() });
@@ -18,7 +19,7 @@ const error = z.strictObject({ error: z.strictObject({ code: z.string(), message
 const responses = { Health: HealthDTO, SessionContext, Entity: EntityDTO, EntityList: z.array(EntityDTO), Membership: MembershipDTO, MembershipList: z.array(MembershipDTO), ApprovalPolicy: ApprovalPolicyDTO, ApprovalPolicyList: z.array(ApprovalPolicyDTO), AuditEventList: z.array(AuditEventDTO), AlertList: z.array(AlertDTO), Job: JobDTO, JobResult, Account: AccountDTO, AccountList: z.array(AccountDTO), Journal: JournalDTO, JournalList: z.array(JournalDTO), FiscalYear: FiscalYearDTO, FiscalYearList: z.array(FiscalYearDTO), Period: PeriodDTO, PeriodList: z.array(PeriodDTO), AccountMappings: AccountMappingsDTO, CommandResult: z.discriminatedUnion("status", [CommandResult, AlertCommandResult, JournalCancelResult, JournalCommandResult]) };
 const requests = { EntityCreate, EntityPatch, MembershipChange, ListQuery, ApprovalPolicyCreate, AuditQuery, Transition, Reason, DateAction, AccountCreate, AccountPatch, JournalCreate, JournalPatch, PeriodCreate, AccountMappingsPatch, NoBody: z.strictObject({}) };
 export function openapi() {
-  const activeRequests = { ...requests, ReportQuery, PartyCreate, PartyPatch, StatementQuery, PolicyDraft }, activeResponses = { ...responses, ReportResult, Party: PartyDTO, PartyList: z.array(PartyDTO), PartyStatement, PolicyDraft: PolicyDraftDTO, PolicyDraftList: z.array(PolicyDraftDTO) };
+  const activeRequests = { ...requests, ReportQuery, PartyCreate, PartyPatch, StatementQuery, PolicyDraft, DocumentUploadRequest }, activeResponses = { ...responses, ReportResult, Party: PartyDTO, PartyList: z.array(PartyDTO), PartyStatement, PolicyDraft: PolicyDraftDTO, PolicyDraftList: z.array(PolicyDraftDTO), Document: PendingDocument, UploadGrant };
   const schemas: Record<string, unknown> = { Error: z.toJSONSchema(error, { unrepresentable: "any" }) };
   // The catalog intentionally shares PolicyDraft's name for command and resource.
   // Keep its strict input separate from the server-owned response envelope.
