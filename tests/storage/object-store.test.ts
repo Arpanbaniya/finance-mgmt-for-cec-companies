@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
@@ -8,11 +8,16 @@ import { CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCo
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { startStorage } from "@/scripts/storage-process";
 import { storageClient } from "@/features/documents/storage-config";
+import { quarantineKey, readQuarantineEvidence } from "@/features/documents/quarantine-reader";
 
 describe("real private persistent object store", () => {
   let service: Awaited<ReturnType<typeof startStorage>>, client: ReturnType<typeof storageClient>;
   let env: NodeJS.ProcessEnv, data: string;
   const bucket = `test-${randomUUID()}`, key = `quarantine/${randomUUID()}/fixture.txt`, body = "Fictional evidence परीक्षण";
+  const scope = { organizationId: randomUUID(), entityId: randomUUID() }, documentId = randomUUID(), evidenceKey = quarantineKey(scope, documentId);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF9sAAAAASUVORK5CYII=", "base64");
+  const declaration = { filename: "Synthetic-source.png", contentType: "image/png" as const, sizeBytes: png.length, sha256: createHash("sha256").update(png).digest("hex") };
+  let evidenceETag: string;
   beforeAll(async () => {
     const port = await new Promise<number>((ok, fail) => {
       const probe = createServer(); probe.once("error", fail);
@@ -23,10 +28,11 @@ describe("real private persistent object store", () => {
     service = await startStorage(env, data); client = storageClient(env);
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
     await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: "text/plain" }));
+    evidenceETag = (await client.send(new PutObjectCommand({ Bucket: bucket, Key: evidenceKey, Body: png, ContentType: "image/png" }))).ETag!;
   });
   afterAll(async () => {
     try {
-      if (client) { await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); await client.send(new DeleteBucketCommand({ Bucket: bucket })); }
+      if (client) { for (const objectKey of [key, evidenceKey]) await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey })); await client.send(new DeleteBucketCommand({ Bucket: bucket })); }
     } finally { client?.destroy(); await service?.stop(); }
   });
   it("retrieves authenticated content and denies anonymous reads and listings", async () => {
@@ -54,5 +60,17 @@ describe("real private persistent object store", () => {
   });
   it("does not silently connect to an occupied endpoint", async () => {
     await expect(startStorage(env, data)).rejects.toThrow("already in use");
+  });
+  it("validates actual private evidence bytes after restart, not a client MIME/hash or scan claim", async () => {
+    const reference = { ...scope, documentId, declaration, etag: evidenceETag }, storage = { client, bucket };
+    const result = await readQuarantineEvidence(reference, scope, storage); expect(result.bytes.equals(png)).toBe(true);
+    expect(result).not.toHaveProperty("scanState"); expect(result).not.toHaveProperty("retentionHeld");
+    expect((await fetch(`${env.S3_ENDPOINT}/${bucket}/${evidenceKey}`)).status).toBe(403);
+    await expect(readQuarantineEvidence({ ...reference, declaration: { ...declaration, sha256: "a".repeat(64) } }, scope, storage)).rejects.toMatchObject({ code: "EVIDENCE_INVALID" });
+    await expect(readQuarantineEvidence(reference, { ...scope, entityId: randomUUID() }, storage)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+  it("rejects an overwritten quarantine object instead of reading its replacement", async () => {
+    await client.send(new PutObjectCommand({ Bucket: bucket, Key: evidenceKey, Body: Buffer.from("Replaced file"), ContentType: "image/png" }));
+    await expect(readQuarantineEvidence({ ...scope, documentId, declaration, etag: evidenceETag }, scope, { client, bucket })).rejects.toMatchObject({ code: "EVIDENCE_CHANGED" });
   });
 });
